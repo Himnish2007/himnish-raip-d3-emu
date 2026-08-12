@@ -1,0 +1,39 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "EMU Motor Coach TM Temperature Monitoring API",
+    "version": "1.0.0",
+    "description": "HIMNISH LIMITED — Real-time traction-motor temperature monitoring for Indian Railways EMU motor coaches. Ingestion is key-authenticated; the dashboard API uses a JWT bearer token from /login."
+  },
+  "servers": [{ "url": "/api/v1" }],
+  "tags": [
+    { "name": "Auth" }, { "name": "Ingestion" }, { "name": "Fleet" },
+    { "name": "Alerts" }, { "name": "Reports" }, { "name": "Admin" }, { "name": "Devices" }
+  ],
+  "paths": {
+    "/login": { "post": { "tags": ["Auth"], "summary": "Get a JWT token", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "username": { "type": "string" }, "password": { "type": "string" } } } } } }, "responses": { "200": { "description": "token + user" }, "401": { "description": "invalid credentials" } } } },
+    "/ingest": { "post": { "tags": ["Ingestion"], "summary": "Push readings for a coach (X-API-Key)", "description": "Header X-API-Key required. Optional 'ts' allows replaying buffered readings with their original timestamp.", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "coach_id": { "type": "string" }, "emu_id": { "type": "string" }, "ts": { "type": "string", "format": "date-time" }, "readings": { "type": "array", "items": { "type": "object", "properties": { "sensor_id": { "type": "string" }, "tm_id": { "type": "string" }, "temperature": { "type": "number" }, "battery_health": { "type": "number" }, "signal_strength": { "type": "number" } } } } } } } } }, "responses": { "200": { "description": "accepted" }, "401": { "description": "invalid API key" } } } },
+    "/device-config": { "get": { "tags": ["Devices"], "summary": "A field RUT pulls its own config (self-update)", "description": "Auth with the shared bootstrap key.", "parameters": [{ "name": "device", "in": "query", "required": true, "schema": { "type": "string" } }, { "name": "key", "in": "query", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "config for the device" }, "401": { "description": "invalid bootstrap key" }, "404": { "description": "device not registered" } } } },
+    "/ping": { "get": { "tags": ["Ingestion"], "summary": "Ingestion health ping (X-API-Key)", "responses": { "200": { "description": "ok" } } } },
+    "/overview": { "get": { "tags": ["Fleet"], "summary": "Fleet KPI summary (Bearer)", "responses": { "200": { "description": "KPIs" } } } },
+    "/emus": { "get": { "tags": ["Fleet"], "summary": "EMUs with coaches & TMs (scoped, Bearer)", "responses": { "200": { "description": "EMU tree" } } } },
+    "/devices": { "get": { "tags": ["Fleet"], "summary": "Data concentrators + LTE modules (Bearer)", "responses": { "200": { "description": "device telemetry" } } } },
+    "/predict": { "get": { "tags": ["Fleet"], "summary": "Predictive early-warning (rate of rise)", "responses": { "200": { "description": "projections" } } } },
+    "/prognostics": { "get": { "tags": ["Fleet"], "summary": "Battery-life & thermal prognostics", "responses": { "200": { "description": "prognostics" } } } },
+    "/map-data": { "get": { "tags": ["Fleet"], "summary": "GIS map: depots + coaches (scoped)", "responses": { "200": { "description": "map data" } } } },
+    "/alerts": { "get": { "tags": ["Alerts"], "summary": "Alerts (scoped, ?state=active)", "responses": { "200": { "description": "alerts" } } } },
+    "/alerts/{id}/ack": { "post": { "tags": ["Alerts"], "summary": "Acknowledge an alert", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }], "responses": { "200": { "description": "acknowledged" } } } },
+    "/history/{sensorId}": { "get": { "tags": ["Reports"], "summary": "Long-range history (from PostgreSQL)", "parameters": [{ "name": "sensorId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "hours", "in": "query", "schema": { "type": "integer" } }], "responses": { "200": { "description": "history points" } } } },
+    "/report/history/xlsx": { "get": { "tags": ["Reports"], "summary": "Historical Excel report for a coach & date range", "parameters": [{ "name": "coach", "in": "query", "required": true, "schema": { "type": "string" } }, { "name": "from", "in": "query", "schema": { "type": "string" } }, { "name": "to", "in": "query", "schema": { "type": "string" } }], "responses": { "200": { "description": "xlsx file" }, "403": { "description": "coach not in scope" } } } },
+    "/system-status": { "get": { "tags": ["Admin"], "summary": "Diagnostics (DB, uptime, per-coach last comm)", "responses": { "200": { "description": "status" } } } },
+    "/backup": { "get": { "tags": ["Admin"], "summary": "Download master-data backup (super admin)", "responses": { "200": { "description": "backup json" } } } },
+    "/restore": { "post": { "tags": ["Admin"], "summary": "Restore master data from a backup (super admin)", "responses": { "200": { "description": "restored" } } } },
+    "/devices-registry": { "get": { "tags": ["Devices"], "summary": "List field devices (admin)", "responses": { "200": { "description": "devices" } } }, "post": { "tags": ["Devices"], "summary": "Register/update a field device (admin)", "responses": { "200": { "description": "device" } } } }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" },
+      "apiKey": { "type": "apiKey", "in": "header", "name": "X-API-Key" }
+    }
+  }
+}

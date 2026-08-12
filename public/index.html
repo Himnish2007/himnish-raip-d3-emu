@@ -1,0 +1,1676 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EMU Motor Coach TM Temperature Monitoring System</title>
+<link rel="icon" type="image/png" href="/assets/himnish-logo.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  /* ---- Light theme (default) — Ocean Blue & White ---- */
+  :root{
+    --bg:#eef5fa; --panel:#ffffff; --panel-2:#f2f8fc; --line:#cfe3f0;
+    --text:#0b2536; --muted:#4c6f85; --faint:#7ea0b5;
+    --brand:#006494; --brand-dim:#bfe0f0;
+    --saffron:#FF9933; --india-green:#138808; --chakra:#006494;
+    --ok:#0d9488; --warn:#d97706; --high:#ea580c; --crit:#dc2626; --off:#94a3b8;
+    --ok-bg:#e2f5f2; --warn-bg:#fdf0dd; --high-bg:#fbeadf; --crit-bg:#fbe9ea; --off-bg:#eef1f6;
+    --shadow:0 1px 3px rgba(0,50,80,.08),0 6px 20px rgba(0,50,80,.07);
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:"Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    --tricolor:linear-gradient(90deg,#004766 0%,#0086bd 50%,#00b4d8 100%);
+  }
+  /* ---- Dark theme ---- */
+  html[data-theme="dark"]{
+    --bg:#071b28; --panel:#0d2635; --panel-2:#123245; --line:#1f4358;
+    --text:#e7f3fa; --muted:#8fb2c6; --faint:#5c8098;
+    --brand:#38bdf8; --brand-dim:#134459;
+    --saffron:#ffab4d; --india-green:#22c55e; --chakra:#38bdf8;
+    --ok:#2dd4bf; --warn:#f59e0b; --high:#fb7c3c; --crit:#ef4444; --off:#64748b;
+    --ok-bg:#0e2e29; --warn-bg:#332408; --high-bg:#34200f; --crit-bg:#36161a; --off-bg:#16303e;
+    --shadow:0 8px 28px rgba(0,0,0,.5);
+    --tricolor:linear-gradient(90deg,#003049 0%,#0086bd 50%,#5fd4f0 100%);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;-webkit-font-smoothing:antialiased}
+  button{font-family:inherit;cursor:pointer}
+  a{color:var(--brand)}
+
+  #login{position:fixed;inset:0;display:grid;place-items:center;
+    background:radial-gradient(1100px 600px at 70% -10%, var(--brand-dim) 0%, var(--bg) 55%);z-index:50}
+  .login-card{width:360px;max-width:92vw;background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;padding:28px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .login-card::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:var(--tricolor)}
+  .brand-row{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .logo{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#00b4d8,var(--brand));
+    display:grid;place-items:center;font-weight:700;color:#fff;font-size:15px}
+  .login-card h1{font-size:16px;margin:0;letter-spacing:.3px}
+  .login-card .sub{color:var(--muted);font-size:12px;margin:2px 0 20px}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+  .field input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:11px 12px;font-size:14px;font-family:var(--mono)}
+  .field input:focus{outline:2px solid var(--brand);border-color:var(--brand)}
+  .btn{background:var(--brand);color:#fff;border:none;border-radius:8px;padding:11px 14px;font-weight:600;width:100%;font-size:14px}
+  .btn:hover{filter:brightness(1.07)}
+  .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line);width:auto;padding:8px 12px;font-weight:500}
+  .btn.ghost:hover{border-color:var(--brand);color:var(--brand)}
+  .err{color:var(--crit);font-size:12px;min-height:16px;margin-top:4px}
+  .hint{margin-top:16px;font-size:11px;color:var(--faint);line-height:1.6}
+  .hint code{color:var(--muted)}
+
+  #app{display:none;min-height:100%}
+  #app::before{content:"";display:block;height:4px;background:var(--tricolor);position:sticky;top:0;z-index:21}
+  .topbar{display:flex;align-items:center;gap:14px;padding:11px 20px;background:var(--panel);
+    border-bottom:1px solid var(--line);position:sticky;top:4px;z-index:20}
+  .topbar .title{font-weight:700;letter-spacing:.3px;font-size:15px}
+  .topbar .tag{font-family:var(--mono);font-size:11px;color:var(--brand);border:1px solid var(--brand-dim);padding:2px 7px;border-radius:6px}
+  .topbar .spacer{flex:1}
+  .live{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);font-family:var(--mono)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)}70%{box-shadow:0 0 0 8px rgba(22,163,74,0)}100%{box-shadow:0 0 0 0 rgba(22,163,74,0)}}
+  .who{font-size:12px;color:var(--muted)} .who b{color:var(--text)}
+  .iconbtn{background:transparent;border:1px solid var(--line);border-radius:8px;width:34px;height:34px;
+    display:grid;place-items:center;font-size:15px;color:var(--text)}
+  .iconbtn:hover{border-color:var(--brand)}
+
+  .nav{display:flex;gap:2px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto}
+  .nav button{background:none;border:none;color:var(--muted);padding:12px 13px;font-size:13px;font-weight:500;
+    border-bottom:2px solid transparent;white-space:nowrap}
+  .nav button:hover{color:var(--text)}
+  .nav button.active{color:var(--brand);border-bottom-color:var(--brand)}
+
+  main{padding:20px;max-width:1340px;margin:0 auto}
+  .view{display:none} .view.active{display:block}
+  .view-head{display:flex;align-items:baseline;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .view-head h2{font-size:18px;margin:0;letter-spacing:.2px}
+  .view-head .desc{color:var(--muted);font-size:13px}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:12px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow)}
+  .kpi .label{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+  .kpi .val{font-family:var(--mono);font-size:30px;font-weight:600;margin-top:8px;line-height:1}
+  .kpi .val.unit::after{content:attr(data-unit);font-size:13px;color:var(--muted);margin-left:3px}
+  .kpi.accent .val{color:var(--brand)}
+  .kpi.ok .val{color:var(--ok)} .kpi.warn .val{color:var(--warn)} .kpi.crit .val{color:var(--crit)}
+
+  .emu{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:var(--shadow)}
+  .emu-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .emu-head .name{font-weight:600;font-size:15px}
+  .emu-head .meta{font-size:12px;color:var(--muted);font-family:var(--mono)}
+  .consist{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  @media(max-width:1180px){.consist{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:860px){.consist{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:520px){.consist{grid-template-columns:1fr}}
+  .coach{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .coach-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .coach-head .cid{font-family:var(--mono);font-weight:600;font-size:13px}
+  .coach-head .pos{font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em}
+  .tms{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .tm{border-radius:10px;padding:10px;border:1px solid var(--line);background:var(--panel);cursor:pointer;transition:transform .08s}
+  .tm:hover{transform:translateY(-1px)}
+  .tm-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px}
+  .tm .tmid{font-size:12px;color:var(--text);text-transform:uppercase;letter-spacing:.04em;font-weight:800}
+  .tm .badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;text-transform:uppercase;letter-spacing:.05em}
+  .tm .badge.normal{background:var(--ok-bg);color:var(--ok)}
+  .tm .badge.warning{background:var(--warn-bg);color:var(--warn)}
+  .tm .badge.high{background:var(--high-bg);color:var(--high)}
+  .tm .badge.critical{background:var(--crit-bg);color:var(--crit)}
+  .tm .badge.offline{background:var(--off-bg);color:var(--off)}
+  .tm .gauge-wrap{display:flex;flex-direction:column;align-items:center;margin-top:0}
+  .tm .gauge-wrap svg{display:block}
+  .tm .chips{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-top:4px}
+  .tm .chip{border-radius:6px;padding:4px 2px 5px;text-align:center;background:var(--panel-2);border:1px solid var(--line)}
+  .tm .chip .cv{font-family:var(--mono);font-weight:800;font-size:13px}
+  .tm .chip .cl{font-size:8px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;margin-top:1px}
+  .tm .chip.cur .cv{color:var(--ok)}
+  .tm .chip.warn .cv{color:var(--warn)}
+  .tm .chip.alarm .cv{color:var(--crit)}
+  .tm.offline .chip.cur .cv{color:var(--off)}
+  .tm .sub{font-size:9px;color:var(--faint);margin-top:5px;font-family:var(--mono);display:flex;justify-content:space-between}
+  .gauge-track-seg{fill:none;stroke-linecap:round}
+  .gauge-needle{stroke:var(--text);stroke-width:3;stroke-linecap:round}
+  .gauge-pivot{fill:var(--text)}
+  .tm.normal{border-color:var(--ok)}
+  .tm.warning{border-color:var(--warn)}
+  .tm.high{border-color:var(--high)}
+  .tm.critical{border-color:var(--crit)} .tm.critical .tmid{animation:flash 1.4s infinite}
+  .tm.offline{opacity:.6}
+  @keyframes flash{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}50%{box-shadow:0 0 0 3px rgba(220,38,38,.22)}}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;background:var(--panel-2)}
+  td{font-family:var(--mono);color:var(--text)} tr:last-child td{border-bottom:none}
+  .sev{font-family:var(--sans);font-weight:600;padding:2px 8px;border-radius:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  .sev.critical{background:var(--crit-bg);color:var(--crit)} .sev.high{background:var(--high-bg);color:var(--high)}
+  .sev.warning{background:var(--warn-bg);color:var(--warn)} .sev.offline{background:var(--off-bg);color:var(--off)}
+  .sev.normal{background:var(--ok-bg);color:var(--ok)}
+  .sev.low_battery{background:var(--warn-bg);color:var(--warn)}
+  .sev.rapid_rise{background:var(--high-bg);color:var(--high)}
+  .state{font-size:11px;color:var(--muted)} .state.active{color:var(--crit)} .state.acknowledged{color:var(--ok)}
+  .mini{background:transparent;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:4px 9px;font-size:12px}
+  .mini:hover{border-color:var(--brand);color:var(--brand)}
+  select,input.inp{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px}
+  .row .f{display:flex;flex-direction:column;gap:5px}
+  .row .f label{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+  .empty{padding:28px;text-align:center;color:var(--faint);font-size:13px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin:8px 0 0;font-size:11px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .swatch{width:10px;height:10px;border-radius:3px;display:inline-block}
+  #chart,#chart2{width:100%;height:340px}
+  .axis text{fill:var(--muted);font-size:11px;font-family:var(--mono)}
+  .axis path,.axis line{stroke:var(--line)}
+  .thline{stroke-dasharray:4 4;stroke-width:1}
+
+  /* Digital twin */
+  .train{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:10px 2px 16px}
+  @media(max-width:1180px){.train{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:860px){.train{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:520px){.train{grid-template-columns:1fr}}
+  .car{min-width:0;background:var(--panel-2);border:1px solid var(--line);border-radius:14px 14px 8px 8px;padding:12px;position:relative}
+  .car::after{content:"";position:absolute;left:24px;right:24px;bottom:-7px;height:7px;background:var(--off);border-radius:0 0 6px 6px;opacity:.4}
+  .car .ch{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .car .ch .cid{font-family:var(--mono);font-weight:600;font-size:13px}
+  .car .ch .pos{font-size:10px;color:var(--faint)}
+  .bogies{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .bg{border-radius:8px;padding:8px 6px 10px;text-align:center;border:1px solid var(--line);cursor:pointer}
+  .bg .lbl{font-size:10px;color:var(--muted);font-weight:700} .bg .v{font-family:var(--mono);font-weight:800;font-size:16px;margin-top:-8px}
+  .carmeta{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);font-family:var(--mono);margin-top:10px}
+
+  /* Heatmap */
+  .hm{display:grid;gap:3px}
+  .hm-row{display:grid;grid-template-columns:130px repeat(4,1fr);gap:3px}
+  .hm-lbl{font-family:var(--mono);font-size:12px;color:var(--muted);display:flex;align-items:center;padding-left:4px}
+  .hm-cell{border-radius:6px;padding:12px 6px;text-align:center;color:#fff;font-family:var(--mono);font-weight:600;font-size:14px;cursor:pointer}
+  .hm-head{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:center;padding-bottom:4px}
+  .scalebar{height:12px;border-radius:6px;background:linear-gradient(90deg,#1e6fd0,#16a34a,#d97706,#dc2626);width:240px}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="login-card">
+    <div style="text-align:center;margin-bottom:14px"><img src="/assets/himnish-logo.png" alt="Himnish Limited" style="height:96px;width:auto"/></div>
+    <div style="text-align:center"><h1 style="margin:0">EMU Motor Coach TM</h1>
+    <div class="sub" style="margin:4px 0 20px">Temperature Monitoring System · Himnish Limited</div></div>
+    <div class="field"><label>Username</label><input id="u" autocomplete="username" /></div>
+    <div class="field"><label>Password</label><input id="p" type="password" autocomplete="current-password" /></div>
+    <button class="btn" id="loginBtn">Sign in</button>
+    <div class="err" id="loginErr"></div>
+    <div class="hint">Demo logins · <code>admin / himnish@2025</code> · <code>engineer / eng@2025</code> · <code>viewer / view@2025</code></div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <img src="/assets/himnish-logo.png" alt="Himnish" style="height:30px;width:auto"/>
+    <span class="title">EMU Motor Coach <span style="color:var(--brand)">TM</span></span>
+    <span class="tag">EMU · TM TEMP</span>
+    <span id="demoBadge" style="display:none;font-family:var(--mono);font-size:11px;color:#fff;background:var(--warn);padding:2px 8px;border-radius:6px">DEMO MODE</span>
+    <span class="spacer"></span>
+    <span class="live"><span class="dot"></span><span id="clock">--:--:--</span></span>
+    <button class="iconbtn" id="themeBtn" title="Toggle theme">🌙</button>
+    <button class="iconbtn" id="langBtn" title="Language">हिं</button>
+    <button class="iconbtn" id="wallBtn" title="Wallboard / control-room mode">⛶</button>
+    <span class="who">Signed in as <b id="whoName">—</b> · <span id="whoRole"></span></span>
+    <button class="btn ghost" id="logoutBtn">Sign out</button>
+  </div>
+
+  <nav class="nav" id="nav">
+    <button data-view="overview" class="active">Overview</button>
+    <button data-view="live">Live EMU</button>
+    <button data-view="twin">Digital Twin</button>
+    <button data-view="heatmap">Heatmap</button>
+    <button data-view="map">Map</button>
+    <button data-view="devices">Devices</button>
+    <button data-view="topology">Topology</button>
+    <button data-view="alerts">Alerts <span id="alertBadge"></span></button>
+    <button data-view="analytics">Analytics</button>
+    <button data-view="predict">Predict</button>
+    <button data-view="swap">Coach Swap</button>
+    <button data-view="maint">Maintenance</button>
+    <button data-view="assets">Admin</button>
+    <button data-view="notify">Notify</button>
+    <button data-view="reports">Reports</button>
+    <button data-view="health">Health</button>
+    <button data-view="assistant">Assistant</button>
+    <button data-view="audit">Audit</button>
+  </nav>
+
+  <main>
+    <section class="view active" id="view-overview">
+      <div class="view-head"><h2>Enterprise Overview</h2><span class="desc">Fleet-wide health · auto-refresh 5s</span></div>
+      <div class="kpis" id="kpis"></div>
+    </section>
+
+    <section class="view" id="view-live">
+      <div class="view-head"><h2>Live EMU Monitoring</h2><span class="desc">Over-threshold coaches float to the top · click a TM for its trend</span></div>
+      <div class="row"><div class="f"><label>Search motor coach ID</label>
+        <input class="inp" id="liveCoachPick" list="liveCoachDL" placeholder="Type coach ID… (blank = all)" autocomplete="off" style="min-width:220px">
+        <datalist id="liveCoachDL"></datalist></div>
+        <div class="f"><label>&nbsp;</label><span class="desc" id="liveCount"></span></div></div>
+      <div class="legend">
+        <span><i class="swatch" style="background:var(--ok)"></i>Normal</span>
+        <span><i class="swatch" style="background:var(--warn)"></i>Warning &gt;70</span>
+        <span><i class="swatch" style="background:var(--high)"></i>High &gt;80</span>
+        <span><i class="swatch" style="background:var(--crit)"></i>Critical &gt;90</span>
+        <span><i class="swatch" style="background:var(--off)"></i>Offline</span>
+      </div>
+      <div id="emus" style="margin-top:14px"></div>
+    </section>
+
+    <section class="view" id="view-twin">
+      <div class="view-head"><h2>EMU Digital Twin</h2><span class="desc">Visual consist layout · 4 coaches × 4 traction motors</span></div>
+      <div class="row"><div class="f"><label>Search EMU ID</label>
+        <input class="inp" id="twinPick" list="twinDL" placeholder="Type EMU ID or name…" autocomplete="off" style="min-width:220px">
+        <datalist id="twinDL"></datalist></div></div>
+      <div class="panel" style="padding:6px 14px"><div class="train" id="train"></div></div>
+    </section>
+
+    <section class="view" id="view-heatmap">
+      <div class="view-head"><h2>Live Temperature Heatmap</h2><span class="desc">Every TM across the fleet · hottest cells surface first</span></div>
+      <div class="row" style="align-items:center"><span class="desc">Cooler</span><span class="scalebar"></span><span class="desc">Hotter</span></div>
+      <div class="panel" style="padding:14px"><div class="hm" id="heatmap"></div></div>
+    </section>
+
+    <section class="view" id="view-devices">
+      <div class="view-head"><h2>Communication Devices</h2><span class="desc">Data concentrators &amp; LTE modules · one per motor coach (tender 4.1 / 4.2)</span></div>
+      <div class="kpis" id="devStats" style="margin-bottom:18px"></div>
+      <div class="view-head"><h2 style="font-size:14px">Data Concentrators</h2><span class="desc">Receives wireless sensor data · forwards to LTE module</span></div>
+      <div class="panel" style="margin-bottom:18px;overflow-x:auto"><table>
+        <thead><tr><th>Concentrator</th><th>Coach</th><th>EMU</th><th>Status</th><th>Sensors</th><th>Avg Signal</th><th>RSSI</th><th>Packet Loss</th><th>Latency</th><th>Retry</th><th>Checksum</th><th>Last Comm</th></tr></thead>
+        <tbody id="dcRows"></tbody></table><div class="empty" id="dcEmpty" style="display:none">No concentrators in your scope yet.</div></div>
+      <div class="view-head"><h2 style="font-size:14px">LTE Communication Modules</h2><span class="desc">4G cloud uplink · IP65 · 77–130 VDC</span></div>
+      <div class="panel" style="overflow-x:auto"><table>
+        <thead><tr><th>LTE / IMEI</th><th>Coach</th><th>SIM</th><th>IP Address</th><th>Network</th><th>Signal</th><th>Data Usage</th><th>Status</th><th>Last Comm</th></tr></thead>
+        <tbody id="lteRows"></tbody></table><div class="empty" id="lteEmpty" style="display:none">No LTE modules in your scope yet.</div></div>
+    </section>
+
+    <section class="view" id="view-alerts">
+      <div class="view-head"><h2>Alert Management Center</h2><span class="desc">SMS / Email hooks fire on raise · acknowledge to close out</span></div>
+      <div class="row"><div class="f"><label>Filter</label>
+        <select id="alertFilter"><option value="">All states</option><option value="active">Active</option><option value="acknowledged">Acknowledged</option></select></div></div>
+      <div class="panel"><table>
+        <thead><tr><th>#</th><th>Severity</th><th>Asset</th><th>Detail</th><th>Raised</th><th>State</th><th></th></tr></thead>
+        <tbody id="alertRows"></tbody></table>
+        <div class="empty" id="alertEmpty" style="display:none">No alerts. Fleet is healthy.</div></div>
+    </section>
+
+    <section class="view" id="view-analytics">
+      <div class="view-head"><h2>Historical Analytics</h2><span class="desc">Compare multiple traction motors over time</span></div>
+      <div class="row"><div class="f" style="flex:1"><label>Sensors to compare (tick up to 6)</label><div id="sensorChecks" style="display:flex;gap:8px;flex-wrap:wrap"></div></div></div>
+      <div class="panel" style="padding:14px"><svg id="chart2"></svg><div id="cmpLegend" class="legend" style="padding:0 8px 6px"></div></div>
+    </section>
+
+    <section class="view" id="view-map">
+      <div class="view-head"><h2>Depot Map</h2><span class="desc">Depots &amp; their coaches · green = healthy, red = alert/offline</span></div>
+      <div class="kpis" id="mapKpis" style="margin-bottom:14px"></div>
+      <div id="mapWrap" style="height:520px;border-radius:12px;overflow:hidden;border:1px solid var(--border)"><div id="map" style="height:100%"></div></div>
+      <div id="mapNote" class="desc" style="margin-top:10px"></div>
+      <div id="noGeo" style="margin-top:8px"></div>
+    </section>
+
+    <section class="view" id="view-predict">
+      <div class="view-head"><h2>Predictive Early-Warning</h2><span class="desc">Rate of temperature rise &amp; projected time-to-critical · soonest first</span></div>
+      <div class="kpis" id="predStats" style="margin-bottom:18px"></div>
+      <div class="panel"><table>
+        <thead><tr><th>TM</th><th>Coach</th><th>EMU</th><th>Temp</th><th>Rise Rate</th><th>Est. time to Critical</th><th>Risk</th></tr></thead>
+        <tbody id="predRows"></tbody></table><div class="empty" id="predEmpty" style="display:none">Not enough data yet — projections need a few readings per sensor.</div></div>
+
+      <div class="view-head" style="margin-top:22px"><h2 style="font-size:14px">Prognostics</h2><span class="desc">Battery-life projection &amp; thermal-degradation trend (statistical, from observed data)</span></div>
+      <div class="panel"><table>
+        <thead><tr><th>TM</th><th>Coach</th><th>Battery %</th><th>Discharge/day</th><th>Est. Battery Life</th><th>Baseline→Recent Avg</th><th>Peak</th><th>Thermal Trend</th><th>Verdict</th></tr></thead>
+        <tbody id="progRows"></tbody></table><div class="empty" id="progEmpty" style="display:none">Collecting data — prognostics need a running trend.</div></div>
+
+      <div class="view-head" style="margin-top:22px"><h2 style="font-size:14px">Peer Anomalies</h2><span class="desc">A motor running much hotter than its sibling motors on the same coach — early warning before it crosses a threshold</span></div>
+      <div class="panel"><table>
+        <thead><tr><th>TM</th><th>Coach</th><th>Temp</th><th>Peer Median</th><th>Deviation</th><th>Reason</th></tr></thead>
+        <tbody id="anomRows"></tbody></table><div class="empty" id="anomEmpty" style="display:none">No peer anomalies — motors on each coach are running consistently.</div></div>
+    </section>
+
+    <section class="view" id="view-swap">
+      <div class="view-head"><h2>Coach Swap</h2><span class="desc">Reassign a coach between EMUs · the coach carries its 4 sensors, no hardware change</span></div>
+      <div class="panel" style="margin-bottom:16px"><table>
+        <thead><tr><th>Coach</th><th>Current EMU</th><th>Position</th><th>Since</th><th>Action</th></tr></thead>
+        <tbody id="coachRows"></tbody></table><div class="empty" id="coachEmpty" style="display:none">No coaches yet.</div></div>
+      <div class="view-head"><h2 style="font-size:15px">Swap History</h2><span class="desc" id="histLabel">Select a coach to view its audit trail</span></div>
+      <div class="panel"><table>
+        <thead><tr><th>Coach</th><th>From</th><th>To</th><th>Pos</th><th>By</th><th>Reason</th><th>At</th></tr></thead>
+        <tbody id="histRows"></tbody></table><div class="empty" id="histEmpty">No history loaded.</div></div>
+    </section>
+
+    <section class="view" id="view-assets">
+      <div class="view-head"><h2>Administration</h2><span class="desc" id="adminScopeNote"></span></div>
+
+      <div class="view-head"><h2 style="font-size:14px">Alert Thresholds</h2><span class="desc">Admin-editable · applies fleet-wide immediately · Log interval controls the RUT200 IP-pull poller (takes effect live, no restart) — per-device push interval is set separately in Field Devices</span></div>
+      <div class="panel" style="padding:16px;margin-bottom:18px">
+        <div class="row" id="thRow">
+          <div class="f"><label>Warning &gt; °C</label><input class="inp" id="thWarn" type="number" style="width:110px"></div>
+          <div class="f"><label>High &gt; °C</label><input class="inp" id="thHigh" type="number" style="width:110px"></div>
+          <div class="f"><label>Critical &gt; °C</label><input class="inp" id="thCrit" type="number" style="width:110px"></div>
+          <div class="f"><label>Offline after (s)</label><input class="inp" id="thOff" type="number" style="width:120px"></div>
+          <div class="f"><label>Low battery ≤ %</label><input class="inp" id="thBat" type="number" style="width:120px"></div>
+          <div class="f"><label>Rapid rise ≥ °C/min</label><input class="inp" id="thRise" type="number" step="0.5" style="width:130px"></div>
+          <div class="f"><label>Log interval (s)</label><input class="inp" id="thLog" type="number" min="5" style="width:120px"></div>
+          <div class="f"><label>&nbsp;</label><button class="btn ghost" id="thSave">Save thresholds</button></div>
+        </div>
+      </div>
+
+      <div class="view-head"><h2 style="font-size:14px">Users &amp; Roles</h2><button class="mini" id="addUserBtn" style="margin-left:auto">+ Add user</button></div>
+      <div class="panel" style="margin-bottom:18px"><table>
+        <thead><tr><th>Username</th><th>Role</th><th>Email</th><th>Mobile</th><th>Assigned EMUs</th><th>Assigned Coaches</th><th>Actions</th></tr></thead>
+        <tbody id="adminUsers"></tbody></table></div>
+
+      <div class="view-head"><h2 style="font-size:14px">EMUs</h2><button class="mini" id="addEmuBtn" style="margin-left:auto">+ Add EMU</button></div>
+      <div class="panel" style="margin-bottom:18px"><table>
+        <thead><tr><th>EMU</th><th>Name</th><th>Depot</th><th>Actions</th></tr></thead>
+        <tbody id="adminEmus"></tbody></table></div>
+
+      <div class="view-head"><h2 style="font-size:14px">Motor Coaches</h2><button class="mini" id="addCoachBtn" style="margin-left:auto">+ Add coach</button></div>
+      <div class="panel" style="margin-bottom:18px"><table>
+        <thead><tr><th>Coach</th><th>EMU</th><th>Pos</th><th>Arch</th><th>RUT200 IP</th><th>Port</th><th>Path</th><th>Poll</th><th>Actions</th></tr></thead>
+        <tbody id="adminCoaches"></tbody></table></div>
+
+      <div class="view-head"><h2 style="font-size:14px">Sensor Registry</h2><span class="desc">Serial no · calibration · firmware · warranty</span></div>
+      <div class="panel"><table>
+        <thead><tr><th>Sensor</th><th>Coach</th><th>Serial No</th><th>Calibration</th><th>Firmware</th><th>Warranty</th><th>Actions</th></tr></thead>
+        <tbody id="adminSensors"></tbody></table><div class="empty" id="sensorEmpty" style="display:none">No sensors yet — push a reading first.</div></div>
+
+      <div class="view-head" style="margin-top:20px"><h2 style="font-size:14px">Depots</h2><button class="mini" id="addDepotBtn" style="margin-left:auto">+ Add depot</button></div>
+      <div class="panel" style="margin-bottom:18px"><table>
+        <thead><tr><th>Depot ID</th><th>Name</th><th>Region</th><th>Lat</th><th>Lng</th><th>EMUs</th><th>Coaches</th><th>Actions</th></tr></thead>
+        <tbody id="adminDepots"></tbody></table><div class="empty" id="depotEmpty" style="display:none">No depots yet.</div></div>
+
+      <div class="view-head" style="margin-top:20px"><h2 style="font-size:14px">Field Devices (RUT self-update)</h2><button class="mini" id="addDeviceBtn" style="margin-left:auto">+ Register device</button></div>
+      <div class="panel" style="margin-bottom:18px"><div class="desc" style="padding:8px 4px">Each RUT pulls its config from here every few minutes. Change coach/tags here and the device updates itself — no site visit needed.</div><table>
+        <thead><tr><th>Device ID</th><th>Coach</th><th>EMU</th><th>Tags (TM1-4)</th><th>Interval</th><th>Enabled</th><th>Last Seen</th><th>Actions</th></tr></thead>
+        <tbody id="adminDevices"></tbody></table><div class="empty" id="deviceEmpty" style="display:none">No field devices registered.</div></div>
+
+      <div class="view-head" style="margin-top:20px"><h2 style="font-size:14px">Bulk Coach Import</h2></div>
+      <div class="panel" style="padding:16px;margin-bottom:18px">
+        <div class="desc" style="margin-bottom:8px">One coach per line: <code>coach_id, emu_id, position</code> (emu_id &amp; position optional). Example: <code>MC-05, EMU-01, 5</code></div>
+        <textarea id="bulkText" class="inp" rows="4" style="width:100%;font-family:var(--mono);font-size:12px" placeholder="MC-05, EMU-01, 5&#10;MC-06, EMU-01, 6"></textarea>
+        <div style="margin-top:10px"><button class="btn ghost" id="bulkBtn">Import coaches</button><span id="bulkNote" class="desc" style="margin-left:10px"></span></div>
+      </div>
+
+      <div class="view-head" style="margin-top:20px"><h2 style="font-size:14px">System Status</h2><button class="mini" id="refreshStatus" style="margin-left:auto">Refresh</button></div>
+      <div class="kpis" id="sysKpis" style="margin-bottom:14px"></div>
+      <div class="panel"><table>
+        <thead><tr><th>Coach</th><th>EMU</th><th>Status</th><th>Sensors</th><th>Last Comm</th></tr></thead>
+        <tbody id="sysCoaches"></tbody></table></div>
+
+      <div class="view-head" style="margin-top:20px"><h2 style="font-size:14px">Backup &amp; Restore</h2><span class="desc">Master data (users, EMUs, coaches, depots, devices, thresholds, config)</span></div>
+      <div class="panel" style="padding:16px">
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+          <button class="btn ghost" id="backupBtn">⬇ Download backup</button>
+          <button class="btn ghost" id="restoreBtn">⬆ Restore from backup</button>
+          <input type="file" id="restoreFile" accept="application/json" style="display:none">
+          <span id="backupNote" class="desc"></span>
+        </div>
+        <div class="desc" style="margin-top:8px">Restore replaces current master data with the backup. Live sensor readings are not affected.</div>
+      </div>
+    </section>
+
+    <section class="view" id="view-notify">
+      <div class="view-head"><h2>SMS &amp; Email Alerting</h2><span class="desc" id="notifyScopeNote"></span></div>
+
+      <div class="kpis" id="notifyStats" style="margin-bottom:18px"></div>
+
+      <div class="view-head"><h2 style="font-size:14px">Alert Routing Rules</h2><span class="desc">Per severity: channels, recipients, escalation</span></div>
+      <div class="panel" style="margin-bottom:18px;overflow-x:auto"><table>
+        <thead><tr><th>Severity</th><th>Email</th><th>SMS</th><th>Email recipients</th><th>Phone recipients</th><th>Escalate to</th><th>After (min)</th><th></th></tr></thead>
+        <tbody id="ruleRows"></tbody></table></div>
+
+      <div class="view-head"><h2 style="font-size:14px">Escalation Tiers</h2><span class="desc">L1 Maintenance → L2 Supervisor → L3 Incharge → L4 Railway HQ</span></div>
+      <div class="panel" style="margin-bottom:18px"><table>
+        <thead><tr><th>Tier</th><th>Name</th><th>Emails</th><th>Phones</th><th></th></tr></thead>
+        <tbody id="tierRows"></tbody></table></div>
+
+      <div class="view-head"><h2 style="font-size:14px">Templates</h2></div>
+      <div class="panel" style="padding:14px;margin-bottom:18px">
+        <div class="field"><label>SMS template</label><input class="inp" id="tplSms" style="width:100%"></div>
+        <div class="field" style="margin-top:10px"><label>Email subject</label><input class="inp" id="tplSub" style="width:100%"></div>
+        <div class="field" style="margin-top:10px"><label>Email body</label><textarea class="inp" id="tplBody" rows="5" style="width:100%;font-family:var(--mono)"></textarea></div>
+        <div style="margin-top:10px"><button class="btn ghost" id="tplSave">Save templates</button>
+          <span class="desc" style="margin-left:10px">Placeholders: {severity} {message} {emu} {coach} {tm} {temp} {time}</span></div>
+      </div>
+
+      <div class="view-head"><h2 style="font-size:14px">Daily Report Email</h2><span class="desc">Emails printable/PDF report links once a day (hour is UTC)</span></div>
+      <div class="panel" style="padding:14px;margin-bottom:18px">
+        <div class="row" style="margin-bottom:0;align-items:end">
+          <div class="f"><label>Enabled</label><select id="rpEnabled"><option value="no">Off</option><option value="yes">On</option></select></div>
+          <div class="f"><label>Hour (UTC 0-23)</label><input class="inp" id="rpHour" type="number" min="0" max="23" style="width:110px"></div>
+          <div class="f" style="flex:1"><label>Recipient emails (comma separated)</label><input class="inp" id="rpEmails" style="width:100%"></div>
+        </div>
+        <div class="row" style="margin:10px 0 0;align-items:end">
+          <div class="f" style="flex:1"><label>Public base URL (for links, e.g. https://yourapp.up.railway.app)</label><input class="inp" id="rpBase" style="width:100%"></div>
+          <div class="f"><label>&nbsp;</label><button class="btn ghost" id="rpSave">Save schedule</button></div>
+          <div class="f"><label>&nbsp;</label><button class="btn ghost" id="rpSend">Send now</button></div>
+        </div>
+        <div class="desc" id="rpNote" style="margin-top:10px"></div>
+      </div>
+
+      <div class="view-head"><h2 style="font-size:14px">Send Test</h2></div>
+      <div class="panel" style="padding:14px;margin-bottom:18px">
+        <div class="row" style="margin-bottom:0">
+          <div class="f"><label>Channel</label><select id="testCh"><option value="email">Email</option><option value="sms">SMS</option></select></div>
+          <div class="f" style="flex:1"><label>To (email or phone)</label><input class="inp" id="testTo" style="width:100%" placeholder="dee@railway.gov.in or 9876543210"></div>
+          <div class="f"><label>&nbsp;</label><button class="btn ghost" id="testSend">Send test</button></div>
+        </div>
+        <div class="desc" id="testNote" style="margin-top:10px"></div>
+      </div>
+
+      <div class="view-head"><h2 style="font-size:14px">Delivery Log</h2></div>
+      <div class="panel"><table>
+        <thead><tr><th>Time</th><th>Channel</th><th>To</th><th>Status</th><th>Detail</th></tr></thead>
+        <tbody id="notifyLog"></tbody></table><div class="empty" id="notifyLogEmpty" style="display:none">No notifications sent yet.</div></div>
+    </section>
+    <section class="view" id="view-reports">
+      <div class="view-head"><h2>Reports</h2><span class="desc">Excel &amp; PDF · scoped to your assigned coaches</span></div>
+      <div class="kpis" id="reportHealth" style="margin-bottom:18px"></div>
+      <div class="panel" style="padding:18px">
+        <div class="desc" style="margin-bottom:12px">Each report exports only your assigned assets. "PDF" opens a print-ready page — use the browser's Print → Save as PDF.</div>
+        <table style="width:100%"><thead><tr><th>Report</th><th>Excel (.xlsx)</th><th>PDF / Print</th></tr></thead><tbody id="reportRows"></tbody></table>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px">
+          <button class="btn ghost" id="csvBtn">⬇ Readings (CSV)</button>
+        </div>
+        <div id="reportNote" class="desc" style="margin-top:14px"></div>
+      </div>
+
+      <div class="view-head" style="margin-top:22px"><h2 style="font-size:14px">Historical Report</h2><span class="desc">Any motor coach · any date range · needs PostgreSQL for full history</span></div>
+      <div class="panel" style="padding:18px">
+        <div class="row" style="align-items:end;margin-bottom:0">
+          <div class="f"><label>Search motor coach ID</label>
+            <input class="inp" id="histCoach" list="histCoachDL" placeholder="Type coach ID…" autocomplete="off">
+            <datalist id="histCoachDL"></datalist></div>
+          <div class="f"><label>From</label><input class="inp" id="histFrom" type="date"></div>
+          <div class="f"><label>To</label><input class="inp" id="histTo" type="date"></div>
+          <div class="f"><label>&nbsp;</label><button class="btn ghost" id="histXlsx">⬇ Excel</button></div>
+          <div class="f"><label>&nbsp;</label><button class="btn ghost" id="histPrint">🖨 PDF</button></div>
+        </div>
+        <div id="histNote" class="desc" style="margin-top:12px"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-health">
+      <div class="view-head"><h2>Health Index</h2><span class="desc">0–100 condition score · sensor → coach → EMU → fleet</span></div>
+      <div class="kpis" id="healthTop" style="margin-bottom:18px"></div>
+      <div class="view-head"><h2 style="font-size:14px">Coach Health (worst first)</h2></div>
+      <div class="panel" style="margin-bottom:18px"><table>
+        <thead><tr><th>Coach</th><th>EMU</th><th>Sensors</th><th>Avg Temp</th><th>Worst</th><th>Health Score</th></tr></thead>
+        <tbody id="coachHealthRows"></tbody></table></div>
+      <div class="view-head"><h2 style="font-size:14px">EMU Health</h2></div>
+      <div class="panel"><table>
+        <thead><tr><th>EMU</th><th>Coaches</th><th>Sensors</th><th>Avg Temp</th><th>Health Score</th></tr></thead>
+        <tbody id="emuHealthRows"></tbody></table></div>
+    </section>
+
+    <section class="view" id="view-assistant">
+      <div class="view-head"><h2>Fleet Assistant</h2><span class="desc">Ask about your fleet in plain words · answers from live data (rule-based, not an external AI)</span></div>
+      <div class="panel" style="padding:16px;margin-bottom:14px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <input id="asstInput" class="inp" style="flex:1;min-width:240px" placeholder="e.g. which coaches are critical? / show offline / hottest TM / lowest battery / active alerts">
+          <button class="btn" id="asstAsk">Ask</button>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap" id="asstChips"></div>
+      </div>
+      <div class="panel" style="padding:16px;min-height:120px" id="asstOut"><div class="desc">Ask a question above, or tap a suggestion.</div></div>
+    </section>
+
+    <section class="view" id="view-audit">
+      <div class="view-head"><h2>Audit Trail</h2><span class="desc">All configuration, alert and asset actions · never deleted</span><button class="mini" id="auditExport" style="margin-left:auto">⬇ Export CSV</button></div>
+      <div class="panel"><table>
+        <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr></thead>
+        <tbody id="auditRows"></tbody></table><div class="empty" id="auditEmpty" style="display:none">No audit records yet.</div></div>
+    </section>
+
+    <section class="view" id="view-topology">
+      <div class="view-head"><h2>Network Topology</h2><span class="desc">Sensor → Data Concentrator → LTE Gateway → Cloud · per motor coach</span></div>
+      <div class="row"><div class="f"><label>Search motor coach ID</label>
+        <input class="inp" id="topoPick" list="topoDL" placeholder="Type coach ID…" autocomplete="off" style="min-width:220px">
+        <datalist id="topoDL"></datalist></div></div>
+      <div class="panel" style="padding:18px"><div id="topo"></div></div>
+    </section>
+
+    <section class="view" id="view-maint">
+      <div class="view-head"><h2>Maintenance Management</h2><span class="desc">Work orders · preventive / corrective · calibration · replacements</span></div>
+      <div class="kpis" id="maintStats" style="margin-bottom:18px"></div>
+      <div class="row"><button class="btn ghost" id="addWoBtn">+ New work order</button>
+        <button class="btn ghost" id="woExport">⬇ Export CSV</button>
+        <div class="f"><label>Filter status</label><select id="woFilter"><option value="">All</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="closed">Closed</option></select></div></div>
+      <div class="panel"><table>
+        <thead><tr><th>#</th><th>Type</th><th>Coach</th><th>Title</th><th>Assigned</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+        <tbody id="woRows"></tbody></table><div class="empty" id="woEmpty" style="display:none">No maintenance records yet.</div></div>
+    </section>
+  </main>
+
+  <footer id="appFooter" style="border-top:1px solid var(--border);margin-top:24px;padding:16px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:var(--panel)">
+    <img src="/assets/himnish-logo.png" alt="Himnish" style="height:40px;width:auto"/>
+    <div style="flex:1;min-width:220px">
+      <div style="font-weight:700;font-size:15px">HIMNISH LIMITED</div>
+      <div class="desc" id="ftAddr" style="margin-top:2px">Industrial IoT &amp; Railway Automation · Ghaziabad, Uttar Pradesh, India</div>
+    </div>
+    <div class="desc" style="text-align:right;line-height:1.9">
+      <div>☎ <span id="ftPhone">+91-8745012381, +91-9873909306</span></div>
+      <div>✉ <span id="ftEmail">sales@himnishindia.com</span> · 🌐 <a href="https://www.himnishprojects.com" target="_blank" id="ftWeb" style="color:var(--brand)">www.himnishprojects.com</a></div>
+    </div>
+  </footer>
+
+  <div id="wallboard" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:60;padding:24px;overflow:auto">
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+      <img src="/assets/himnish-logo.png" alt="Himnish" style="height:38px;width:auto"/>
+      <span style="font-weight:700;font-size:20px">EMU Motor Coach TM · Control Room</span>
+      <span class="live"><span class="dot"></span><span id="wallClock"></span></span>
+      <span class="spacer" style="flex:1"></span>
+      <span id="wallView" style="font-family:var(--mono);color:var(--muted);font-size:13px"></span>
+      <button class="btn ghost" id="wallExit">✕ Exit</button>
+    </div>
+    <div id="wallBody"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var TOKEN=null,USER=null,POLL=null,CURRENT='overview',SELECTED_COACH=null,CMP=[];
+  var ROLE_LABELS={super_admin:'Super Admin',railway_hq:'Railway HQ',depot_admin:'Depot Admin',maintenance_eng:'Maintenance Engineer',observer:'Observer'};
+  var PALETTE=['#0ea5e9','#16a34a','#d97706','#dc2626','#7c3aed','#0891b2'];
+
+  function $(s){return document.querySelector(s);}
+  function el(t,c,txt){var e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e;}
+  // ---- Half-circle temperature gauge (0-110°C scale) ----
+  // ---- Half-circle needle temperature gauge — 3 colour zones (green/amber/red) + needle, like LOCO TM CMS ----
+  var THRESH_CACHE=null;
+  async function getThresholds(){if(!THRESH_CACHE){try{THRESH_CACHE=await api('/thresholds');}catch(e){THRESH_CACHE={CFG_WARN_TEMP:70,CFG_HIGH_TEMP:80,CFG_CRIT_TEMP:90};}}return THRESH_CACHE;}
+  function gaugeColorVar(cls,status){
+    if(status==='offline')return 'var(--off)';
+    return cls==='normal'?'var(--ok)':cls==='warning'?'var(--warn)':cls==='high'?'var(--high)':cls==='critical'?'var(--crit)':'var(--off)';
+  }
+  function arcPath(cx,cy,r,a0,a1){
+    function pt(a){var rad=a*Math.PI/180;return [cx+r*Math.cos(rad),cy-r*Math.sin(rad)];}
+    var p0=pt(a0),p1=pt(a1);
+    return 'M'+p0[0].toFixed(2)+','+p0[1].toFixed(2)+' A'+r+','+r+' 0 0 1 '+p1[0].toFixed(2)+','+p1[1].toFixed(2);
+  }
+  function tempGaugeSVG(temp,cls,status,warn,crit,size){
+    size=size||120;var w=size,h=Math.round(size*0.62),r=size/2-16,cx=size/2,cy=h-6,sw=Math.max(7,Math.round(size*0.09));
+    warn=warn||70;crit=crit||90;var max=crit+(crit-warn)*0.6;if(max<=crit)max=crit*1.2;
+    var warnA=180-180*(warn/max),critA=180-180*(crit/max);
+    var val=(temp==null)?0:Math.max(0,Math.min(max,temp));
+    var needleA=180-180*(val/max);
+    var needleColor=gaugeColorVar(cls,status);
+    var rn=r-2;var nx=(cx+rn*Math.cos(needleA*Math.PI/180)).toFixed(2),ny=(cy-rn*Math.sin(needleA*Math.PI/180)).toFixed(2);
+    return '<svg class="gauge" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'">'+
+      '<path class="gauge-track-seg" stroke="var(--ok)" stroke-width="'+sw+'" d="'+arcPath(cx,cy,r,180,warnA)+'"/>'+
+      '<path class="gauge-track-seg" stroke="var(--warn)" stroke-width="'+sw+'" d="'+arcPath(cx,cy,r,warnA,critA)+'"/>'+
+      '<path class="gauge-track-seg" stroke="var(--crit)" stroke-width="'+sw+'" d="'+arcPath(cx,cy,r,critA,0)+'"/>'+
+      '<line class="gauge-needle" x1="'+cx+'" y1="'+cy+'" x2="'+nx+'" y2="'+ny+'" stroke="'+(status==='offline'?'var(--off)':needleColor)+'"/>'+
+      '<circle class="gauge-pivot" cx="'+cx+'" cy="'+cy+'" r="'+Math.max(3,sw*0.4)+'" fill="'+(status==='offline'?'var(--off)':'var(--text)')+'"/>'+
+      '</svg>';
+  }
+
+  // theme
+  try{var saved=localStorage.getItem('raip_theme');if(saved)document.documentElement.setAttribute('data-theme',saved);}catch(e){}
+  function syncThemeIcon(){var d=document.documentElement.getAttribute('data-theme')==='dark';$('#themeBtn').textContent=d?'☀️':'🌙';}
+  $('#themeBtn').addEventListener('click',function(){
+    var d=document.documentElement.getAttribute('data-theme')==='dark';
+    var nv=d?'light':'dark';document.documentElement.setAttribute('data-theme',nv);
+    try{localStorage.setItem('raip_theme',nv);}catch(e){} syncThemeIcon();
+    if(CURRENT==='analytics')drawCompare();
+  });
+  syncThemeIcon();
+  $('#wallBtn').addEventListener('click',enterWall);
+  $('#wallExit').addEventListener('click',exitWall);
+  $('#addWoBtn').addEventListener('click',addWo);
+  $('#woFilter').addEventListener('change',renderMaint);
+  $('#woExport').addEventListener('click',function(){download('/export/maintenance.csv','maintenance.csv').catch(function(e){alert(e.message);});});
+  $('#auditExport').addEventListener('click',function(){download('/export/audit.csv','audit.csv').catch(function(e){alert(e.message);});});
+
+  async function api(path,opts){
+    opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json'},opts.headers||{},TOKEN?{Authorization:'Bearer '+TOKEN}:{});
+    var r=await fetch('/api/v1'+path,opts);
+    if(r.status===401&&TOKEN){doLogout();throw new Error('Session expired');}
+    if(!r.ok){var e=await r.json().catch(function(){return{};});throw new Error(e.error||('HTTP '+r.status));}
+    return r.json();
+  }
+
+  $('#loginBtn').addEventListener('click',login);
+  $('#p').addEventListener('keydown',function(e){if(e.key==='Enter')login();});
+  async function login(){
+    $('#loginErr').textContent='';
+    try{
+      var res=await fetch('/api/v1/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('#u').value.trim(),password:$('#p').value})});
+      if(!res.ok)throw new Error('Invalid credentials');
+      var data=await res.json();TOKEN=data.token;USER=data.user;
+      $('#login').style.display='none';$('#app').style.display='block';
+      $('#whoName').textContent=USER.username;$('#whoRole').textContent=ROLE_LABELS[USER.role]||USER.role;
+      var canAdmin=['super_admin','railway_hq'].indexOf(USER.role)>=0;
+      document.querySelector('.nav button[data-view="assets"]').style.display=canAdmin?'':'none';
+      document.querySelector('.nav button[data-view="notify"]').style.display=canAdmin?'':'none';
+      document.querySelector('.nav button[data-view="audit"]').style.display=canAdmin?'':'none';
+      bindAdminOnce();
+      fetch('/healthz').then(function(r){return r.json();}).then(function(h){$('#demoBadge').style.display=h.demo?'':'none';}).catch(function(){});
+      startClock();switchView('overview');startPolling();startIdleTimer();
+    }catch(err){$('#loginErr').textContent=err.message;}
+  }
+  $('#logoutBtn').addEventListener('click',doLogout);
+  $('#langBtn').addEventListener('click',toggleLang);
+
+  // ---- Bilingual (English / हिंदी) toggle for the core UI ----
+  var LANG='en';
+  var I18N={
+    'Overview':'ओवरव्यू','Live EMU':'लाइव EMU','Digital Twin':'डिजिटल ट्विन','Heatmap':'हीटमैप','Map':'नक्शा',
+    'Devices':'डिवाइस','Topology':'टोपोलॉजी','Alerts':'अलर्ट','Analytics':'एनालिटिक्स','Predict':'पूर्वानुमान',
+    'Coach Swap':'कोच स्वैप','Maintenance':'रखरखाव','Admin':'एडमिन','Notify':'सूचना','Reports':'रिपोर्ट',
+    'Health':'हेल्थ','Assistant':'सहायक','Audit':'ऑडिट','Sign out':'साइन आउट',
+    'Enterprise Overview':'फ्लीट ओवरव्यू','Live EMU Status':'लाइव EMU स्थिति',
+    'Temperature Heatmap':'तापमान हीटमैप','Depot Map':'डिपो नक्शा','Network Topology':'नेटवर्क टोपोलॉजी',
+    'Alert Management Center':'अलर्ट प्रबंधन केंद्र','Historical Analytics':'ऐतिहासिक एनालिटिक्स',
+    'Predictive Early-Warning':'पूर्वानुमान चेतावनी','Coach Swap':'कोच स्वैप','Health Index':'हेल्थ इंडेक्स',
+    'Fleet Assistant':'फ्लीट सहायक','Audit Trail':'ऑडिट ट्रेल','Data Concentrators & LTE':'डेटा कंसंट्रेटर और LTE',
+    'Prognostics':'प्रोग्नोस्टिक्स','Peer Anomalies':'पीयर विसंगतियाँ','Reports':'रिपोर्ट',
+    'Maintenance Management':'रखरखाव प्रबंधन','Users & Roles':'यूज़र और रोल','EMUs':'EMU','Motor Coaches':'मोटर कोच',
+    'Depots':'डिपो','Field Devices (RUT self-update)':'फील्ड डिवाइस','System Status':'सिस्टम स्थिति','Backup & Restore':'बैकअप और रीस्टोर',
+    // common table columns
+    'Coach':'कोच','EMU':'EMU','Temp':'तापमान','Status':'स्थिति','Actions':'कार्य','Severity':'गंभीरता','Asset':'एसेट',
+    'Detail':'विवरण','State':'स्थिति','Time':'समय','User':'यूज़र','Action':'कार्रवाई','Role':'रोल','Battery %':'बैटरी %',
+    'Sensors':'सेंसर','Avg Temp':'औसत तापमान','Worst':'सबसे खराब','Health Score':'हेल्थ स्कोर','Coaches':'कोच',
+    'Position':'पोज़िशन','Reason':'कारण','Risk':'जोखिम','Verdict':'निर्णय','Enabled':'सक्रिय','Last Seen':'अंतिम बार',
+    'Username':'यूज़रनेम','Email':'ईमेल','Mobile':'मोबाइल','Name':'नाम','Depot':'डिपो','Device ID':'डिवाइस ID',
+    'Interval':'अंतराल','Battery':'बैटरी','Peak':'शिखर','Deviation':'विचलन','Peer Median':'पीयर मध्यमान',
+    'Rise Rate':'वृद्धि दर','Assigned EMUs':'सौंपे गए EMU','Assigned Coaches':'सौंपे गए कोच'
+  };
+  function applyLang(){
+    var hi=LANG==='hi';
+    function tr(elm){ if(elm.dataset.en===undefined)elm.dataset.en=elm.textContent; elm.textContent=hi?(I18N[elm.dataset.en]||elm.dataset.en):elm.dataset.en; }
+    document.querySelectorAll('.nav button[data-view]').forEach(tr);
+    document.querySelectorAll('.view-head h2').forEach(tr);
+    document.querySelectorAll('thead th').forEach(tr);
+    var lo=$('#logoutBtn');if(lo)tr(lo);
+  }
+  function toggleLang(){LANG=(LANG==='en')?'hi':'en';applyLang();$('#langBtn').textContent=(LANG==='en')?'हिं':'EN';}
+  function doLogout(){TOKEN=null;USER=null;if(POLL)clearInterval(POLL);$('#app').style.display='none';$('#login').style.display='grid';$('#p').value='';}
+
+  $('#nav').addEventListener('click',function(e){var b=e.target.closest('button[data-view]');if(b)switchView(b.dataset.view);});
+  function switchView(v){
+    CURRENT=v;
+    document.querySelectorAll('.nav button[data-view]').forEach(function(b){b.classList.toggle('active',b.dataset.view===v);});
+    document.querySelectorAll('.view').forEach(function(s){s.classList.toggle('active',s.id==='view-'+v);});
+    renderView();            // always render the newly opened view
+  }
+  function startClock(){setInterval(function(){$('#clock').textContent=new Date().toLocaleTimeString('en-GB');},1000);}
+
+  // Session auto-logout after inactivity (tender security). Warns 1 min before.
+  var SESSION_IDLE_MIN=30,IDLE_TIMER=null,IDLE_WARN=null,IDLE_LAST=Date.now();
+  function resetIdle(){
+    IDLE_LAST=Date.now();
+    if(IDLE_WARN){clearTimeout(IDLE_WARN);IDLE_WARN=null;}
+    if(IDLE_TIMER){clearTimeout(IDLE_TIMER);}
+    if(!TOKEN)return;
+    IDLE_WARN=setTimeout(function(){ if(TOKEN) alert('Session about to expire due to inactivity. Move the mouse or press a key to stay signed in.'); },(SESSION_IDLE_MIN-1)*60000);
+    IDLE_TIMER=setTimeout(function(){ if(TOKEN){ doLogout(); alert('Signed out due to '+SESSION_IDLE_MIN+' minutes of inactivity.'); } },SESSION_IDLE_MIN*60000);
+  }
+  function startIdleTimer(){
+    ['mousemove','keydown','click','scroll','touchstart'].forEach(function(ev){document.addEventListener(ev,resetIdle,{passive:true});});
+    resetIdle();
+  }
+  function startPolling(){if(POLL)clearInterval(POLL);POLL=setInterval(pollRefresh,5000);}
+
+  // Full dispatch — renders whichever view is currently open.
+  async function renderView(){
+    try{
+      if(CURRENT==='overview')return renderOverview();
+      if(CURRENT==='live')return renderLive();
+      if(CURRENT==='twin')return renderTwin();
+      if(CURRENT==='heatmap')return renderHeatmap();
+      if(CURRENT==='map')return renderMap();
+      if(CURRENT==='devices')return renderDevices();
+      if(CURRENT==='topology')return renderTopology();
+      if(CURRENT==='alerts')return renderAlerts();
+      if(CURRENT==='analytics')return renderAnalytics();
+      if(CURRENT==='predict')return renderPredict();
+      if(CURRENT==='swap')return renderSwap();
+      if(CURRENT==='maint')return renderMaint();
+      if(CURRENT==='assets')return renderAdmin();
+      if(CURRENT==='notify')return renderNotify();
+      if(CURRENT==='reports')return renderReports();
+      if(CURRENT==='health')return renderHealth();
+      if(CURRENT==='assistant')return renderAssistant();
+      if(CURRENT==='audit')return renderAudit();
+    }catch(err){}
+  }
+
+  // Auto-refresh poll (every 5s): only re-render LIVE data views so that
+  // forms and charts (Admin, Notify, Analytics, Reports, Swap, Maintenance)
+  // are never interrupted/reset while you use them.
+  var LIVE_VIEWS={overview:1,live:1,twin:1,heatmap:1,map:1,devices:1,topology:1,alerts:1,predict:1,health:1};
+  async function pollRefresh(){
+    try{
+      await updateBadge();
+      if(!LIVE_VIEWS[CURRENT])return;
+      return renderView();
+    }catch(err){}
+  }
+  var refresh=renderView;   // back-compat for any other callers
+  async function updateBadge(){
+    var a=await api('/alerts?state=active');var b=$('#alertBadge');
+    if(a.length){b.textContent=a.length;b.style.cssText='background:var(--crit);color:#fff;border-radius:9px;padding:0 6px;font-size:11px;margin-left:2px';}else b.textContent='';
+  }
+
+  function cls(t){return t==null?'offline':(t>90?'critical':t>80?'high':t>70?'warning':'normal');}
+
+  async function renderOverview(){
+    var k=await api('/overview');
+    var cards=[['Total EMUs',k.total_emus,'','accent'],['Motor Coaches',k.total_coaches,'',''],['Traction Motors',k.total_tms,'',''],
+      ['Sensors Online',k.online_sensors,'','ok'],['Sensors Offline',k.offline_sensors,'',k.offline_sensors?'crit':''],
+      ['Healthy TMs',k.healthy_tms,'','ok'],['Warning TMs',k.warning_tms,'',k.warning_tms?'warn':''],['Critical TMs',k.critical_tms,'',k.critical_tms?'crit':''],
+      ['Active Alerts',k.active_alerts,'',k.active_alerts?'crit':''],['Acknowledged',k.acknowledged_alerts,'',''],["Today's Alarms",k.todays_alerts,'',''],
+      ['Avg Fleet Temp',k.avg_fleet_temp==null?'—':k.avg_fleet_temp,'°C','accent']];
+    var g=$('#kpis');g.innerHTML='';
+    cards.forEach(function(c){var d=el('div','kpi '+(c[3]||''));d.appendChild(el('div','label',c[0]));var v=el('div','val'+(c[2]?' unit':''),c[1]);if(c[2])v.dataset.unit=c[2];d.appendChild(v);g.appendChild(d);});
+  }
+
+  var RANK={critical:4,high:3,warning:2,offline:1,normal:0};
+  function coachRank(c){return c.tms.reduce(function(m,t){return Math.max(m,RANK[t.classification]||0);},0);}
+  function ago(iso){if(!iso)return null;var s=Math.floor((Date.now()-new Date(iso).getTime())/1000);if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
+  async function renderLive(){
+    var emus=await api('/emus');var wrap=$('#emus');var th=await getThresholds();
+    var warnT=th.CFG_WARN_TEMP||th.warn||70, critT=th.CFG_CRIT_TEMP||th.crit||90;
+    // populate coach dropdown (assigned coaches only)
+    var allCoaches=[];emus.forEach(function(e){e.coaches.forEach(function(c){allCoaches.push(c.coach_id);});});
+    var sel=$('#liveCoachPick');var keep=sel.value;
+    var dl=$('#liveCoachDL');dl.innerHTML='';
+    allCoaches.sort().forEach(function(cid){var o=el('option',null,null);o.value=cid;dl.appendChild(o);});
+    if(!sel._wired){sel._wired=true;sel.addEventListener('input',function(){clearTimeout(sel._t);sel._t=setTimeout(renderLive,180);});}
+    var filter=sel.value.trim().toLowerCase();
+    // filter (by coach ID substring — search instead of scrolling a dropdown) + sort: over-threshold coaches first
+    emus.forEach(function(e){
+      e.coaches=e.coaches.filter(function(c){return !filter||c.coach_id.toLowerCase().indexOf(filter)>=0;});
+      e.coaches.sort(function(a,b){return coachRank(b)-coachRank(a);});
+      e._rank=e.coaches.reduce(function(m,c){return Math.max(m,coachRank(c));},0);
+    });
+    emus=emus.filter(function(e){return e.coaches.length;});
+    emus.sort(function(a,b){return b._rank-a._rank;});
+    var totC=allCoaches.length;var alarmC=0;
+    wrap.innerHTML='';
+    if(!emus.length){wrap.appendChild(el('div','empty','Waiting for sensor data…'));$('#liveCount').textContent='';return;}
+    emus.forEach(function(e){
+      var card=el('div','emu');var head=el('div','emu-head');
+      head.appendChild(el('span','name',e.name));
+      head.appendChild(el('span','meta','· '+e.coaches.length+' coaches · '+e.coaches.reduce(function(a,c){return a+c.tms.length;},0)+' TMs'));
+      if(e._rank>=2){var b=el('span','sev '+(e._rank>=4?'critical':e._rank>=3?'high':'warning'),'NEEDS ATTENTION');b.style.marginLeft='6px';head.appendChild(b);}
+      card.appendChild(head);var consist=el('div','consist');
+      e.coaches.forEach(function(c){
+        var cr=coachRank(c);if(cr>=2)alarmC++;
+        var cc=el('div','coach');if(cr>=2){cc.style.borderColor='var(--'+(cr>=4?'crit':cr>=3?'high':'warn')+')';cc.style.boxShadow='0 0 0 1px var(--'+(cr>=4?'crit':cr>=3?'high':'warn')+')';}
+        var ch=el('div','coach-head');ch.appendChild(el('span','cid',c.coach_id));ch.appendChild(el('span','pos','Pos '+(c.position||'?')));
+        var allOff=c.tms.every(function(t){return t.status==='offline';});
+        if(allOff){
+          var last=c.tms.map(function(t){return t.last_update;}).filter(Boolean).sort().pop();
+          var lbl=last?('OFFLINE · last seen '+ago(last)):'OFFLINE · never reported';
+          var ob=el('span','sev offline',lbl);ob.style.marginLeft='6px';ch.appendChild(ob);
+          cc.style.borderColor='var(--off)';
+        }
+        cc.appendChild(ch);
+        var tms=el('div','tms');
+        c.tms.forEach(function(t){
+          var tile=el('div','tm '+t.classification);
+          var top=el('div','tm-top');top.appendChild(el('span','tmid',t.tm_id||t.sensor_id));
+          top.appendChild(el('span','badge '+(t.status==='offline'?'offline':t.classification),t.status==='offline'?'OFFLINE':t.classification.toUpperCase()));
+          tile.appendChild(top);
+          var gw=el('div','gauge-wrap');gw.innerHTML=tempGaugeSVG(t.temperature,t.classification,t.status,warnT,critT,100);tile.appendChild(gw);
+          var chips=el('div','chips');
+          var cCur=el('div','chip cur');cCur.appendChild(el('div','cv',t.status==='offline'||t.temperature==null?'—':t.temperature.toFixed(1)+'°'));cCur.appendChild(el('div','cl','Current'));chips.appendChild(cCur);
+          var cWarn=el('div','chip warn');cWarn.appendChild(el('div','cv',warnT+'°'));cWarn.appendChild(el('div','cl','Warn'));chips.appendChild(cWarn);
+          var cAlarm=el('div','chip alarm');cAlarm.appendChild(el('div','cv',critT+'°'));cAlarm.appendChild(el('div','cl','Alarm'));chips.appendChild(cAlarm);
+          tile.appendChild(chips);
+          var sub=el('div','sub');sub.appendChild(el('span',null,t.status==='offline'?'OFFLINE':'⚡'+(t.signal_strength||0)+'%'));sub.appendChild(el('span',null,'🔋'+(t.battery_health==null?'—':t.battery_health+'%')));tile.appendChild(sub);
+          tile.addEventListener('click',function(){openTrend(t.sensor_id);});tms.appendChild(tile);
+        });
+        cc.appendChild(tms);consist.appendChild(cc);
+      });
+      card.appendChild(consist);wrap.appendChild(card);
+    });
+    $('#liveCount').textContent=alarmC?(alarmC+' coach(es) above threshold — shown first'):(totC+' coach(es) · all normal');
+  }
+
+  async function renderTwin(){
+    var emus=await api('/emus');var sel=$('#twinPick');var keep=sel.value;var th=await getThresholds();
+    var dl=$('#twinDL');dl.innerHTML='';
+    emus.forEach(function(e){var o=el('option',null,null);o.value=e.emu_id+' · '+e.name;dl.appendChild(o);});
+    if(keep)sel.value=keep;else if(emus.length)sel.value=emus[0].emu_id+' · '+emus[0].name;
+    if(!sel._wired){sel._wired=true;sel.addEventListener('input',function(){clearTimeout(sel._t);sel._t=setTimeout(function(){drawTwin(emus,th);},180);});}
+    drawTwin(emus,th);
+  }
+  function resolveEmu(emus,q){
+    q=(q||'').trim().toLowerCase();if(!q)return emus[0];
+    var exact=emus.find(function(e){return e.emu_id.toLowerCase()===q||(e.emu_id+' · '+e.name).toLowerCase()===q;});
+    if(exact)return exact;
+    return emus.find(function(e){return e.emu_id.toLowerCase().indexOf(q)>=0||e.name.toLowerCase().indexOf(q)>=0;});
+  }
+  function drawTwin(emus,th){
+    th=th||{};var warnT=th.CFG_WARN_TEMP||th.warn||70, critT=th.CFG_CRIT_TEMP||th.crit||90;
+    var e=resolveEmu(emus,$('#twinPick').value);var t=$('#train');t.innerHTML='';
+    if(!e){t.appendChild(el('div','empty','No EMU selected'));return;}
+    e.coaches.forEach(function(c){
+      var car=el('div','car');var ch=el('div','ch');ch.appendChild(el('span','cid',c.coach_id));ch.appendChild(el('span','pos','Pos '+(c.position||'?')));car.appendChild(ch);
+      var bg=el('div','bogies');var sig=0,bat=0,n=0;
+      c.tms.forEach(function(tm){
+        var cell=el('div','bg '+tm.classification);
+        cell.style.background='var(--panel)';
+        cell.style.borderColor='var(--'+(tm.classification==='normal'?'ok':tm.classification==='offline'?'off':tm.classification)+')';
+        cell.appendChild(el('div','lbl',tm.tm_id||tm.sensor_id));
+        var gw=el('div','gauge-wrap');gw.innerHTML=tempGaugeSVG(tm.temperature,tm.classification,tm.status,warnT,critT,72);cell.appendChild(gw);
+        var v=el('div','v',(tm.temperature==null||tm.status==='offline')?'—':tm.temperature.toFixed(1)+'°');
+        v.style.color='var(--'+(tm.classification==='normal'?'ok':tm.classification==='offline'?'off':tm.classification)+')';
+        cell.appendChild(v);cell.addEventListener('click',function(){openTrend(tm.sensor_id);});bg.appendChild(cell);
+        if(tm.signal_strength!=null){sig+=tm.signal_strength;n++;} if(tm.battery_health!=null)bat=Math.max(bat,tm.battery_health);
+      });
+      car.appendChild(bg);
+      var meta=el('div','carmeta');meta.appendChild(el('span',null,'⚡ '+(n?Math.round(sig/n):0)+'%'));meta.appendChild(el('span',null,'🔋 '+bat+'%'));car.appendChild(meta);
+      t.appendChild(car);
+    });
+  }
+
+  async function renderHeatmap(){
+    var emus=await api('/emus');var hm=$('#heatmap');hm.innerHTML='';
+    var head=el('div','hm-row');head.appendChild(el('div','hm-head',''));['TM1','TM2','TM3','TM4'].forEach(function(h){head.appendChild(el('div','hm-head',h));});hm.appendChild(head);
+    var rows=[];
+    emus.forEach(function(e){e.coaches.forEach(function(c){rows.push({label:e.emu_id+' · '+c.coach_id,tms:c.tms,max:Math.max.apply(null,c.tms.map(function(t){return t.temperature||0;}))});});});
+    rows.sort(function(a,b){return b.max-a.max;});
+    function color(t){if(t==null)return 'var(--off)';if(t>90)return '#dc2626';if(t>80)return '#ea580c';if(t>70)return '#d97706';if(t>62)return '#65a30d';return '#1e6fd0';}
+    rows.forEach(function(r){
+      var row=el('div','hm-row');row.appendChild(el('div','hm-lbl',r.label));
+      r.tms.forEach(function(t){
+        var cell=el('div','hm-cell',(t.temperature==null||t.status==='offline')?'—':t.temperature.toFixed(0)+'°');
+        cell.style.background=color(t.status==='offline'?null:t.temperature);
+        cell.title=(t.tm_id||t.sensor_id);cell.addEventListener('click',function(){openTrend(t.sensor_id);});row.appendChild(cell);
+      });
+      hm.appendChild(row);
+    });
+    if(!rows.length)hm.appendChild(el('div','empty','Waiting for sensor data…'));
+  }
+
+  async function renderDevices(){
+    var d=await api('/devices');
+    var dcOnline=d.concentrators.filter(function(x){return x.status==='online';}).length;
+    var lteOnline=d.lte.filter(function(x){return x.status==='online';}).length;
+    var sc=$('#devStats');sc.innerHTML='';
+    [['Concentrators',d.concentrators.length,'accent'],['Concentrators Online',dcOnline,'ok'],
+     ['LTE Modules',d.lte.length,'accent'],['LTE Online',lteOnline,'ok'],
+     ['Comm Failures',(d.concentrators.length-dcOnline)+(d.lte.length-lteOnline),(d.concentrators.length-dcOnline)?'crit':'']].forEach(function(c){
+      var x=el('div','kpi '+(c[2]||''));x.appendChild(el('div','label',c[0]));x.appendChild(el('div','val',c[1]));sc.appendChild(x);});
+    function statusCell(s){var td=el('td');var sp=el('span','sev '+(s==='online'?'warning':'critical'),s);sp.style.background=s==='online'?'var(--ok-bg)':'var(--crit-bg)';sp.style.color=s==='online'?'var(--ok)':'var(--crit)';td.appendChild(sp);return td;}
+    function tm(iso){return iso?new Date(iso).toLocaleTimeString('en-GB'):'—';}
+    var dc=$('#dcRows');dc.innerHTML='';$('#dcEmpty').style.display=d.concentrators.length?'none':'block';
+    d.concentrators.forEach(function(c){
+      var tr=el('tr');
+      tr.appendChild(el('td',null,c.id));tr.appendChild(el('td',null,c.coach_id));tr.appendChild(el('td',null,c.emu_id||'—'));
+      tr.appendChild(statusCell(c.status));
+      tr.appendChild(el('td',null,c.sensors_reporting+'/'+c.total_sensors));
+      tr.appendChild(el('td',null,c.avg_signal==null?'—':c.avg_signal+'%'));
+      tr.appendChild(el('td',null,c.rssi==null?'—':c.rssi+' dBm'));
+      tr.appendChild(el('td',null,c.packet_loss==null?'—':c.packet_loss+'%'));
+      tr.appendChild(el('td',null,c.latency==null?'—':c.latency+' ms'));
+      tr.appendChild(el('td',null,c.retry_count==null?'—':c.retry_count));
+      tr.appendChild(el('td',null,c.checksum_failures==null?'—':c.checksum_failures));
+      tr.appendChild(el('td',null,tm(c.last_comm)));
+      dc.appendChild(tr);
+    });
+    var lt=$('#lteRows');lt.innerHTML='';$('#lteEmpty').style.display=d.lte.length?'none':'block';
+    d.lte.forEach(function(l){
+      var tr=el('tr');
+      tr.appendChild(el('td',null,l.imei||l.id));tr.appendChild(el('td',null,l.coach_id));
+      tr.appendChild(el('td',null,l.sim||'—'));tr.appendChild(el('td',null,l.ip||'—'));
+      tr.appendChild(el('td',null,l.network||'—'));
+      tr.appendChild(el('td',null,l.signal==null?'—':l.signal+'%'));
+      tr.appendChild(el('td',null,l.data_usage||'—'));
+      tr.appendChild(statusCell(l.status));
+      tr.appendChild(el('td',null,tm(l.last_comm)));
+      lt.appendChild(tr);
+    });
+  }
+
+  // ---- Network Topology ----
+  async function renderTopology(){
+    var d=await api('/devices');var emus=await api('/emus');
+    var coaches=[];emus.forEach(function(e){e.coaches.forEach(function(c){coaches.push({coach_id:c.coach_id,emu_id:e.emu_id,tms:c.tms});});});
+    var sel=$('#topoPick');var keep=sel.value;var dl=$('#topoDL');dl.innerHTML='';
+    coaches.forEach(function(c){var o=el('option',null,null);o.value=c.coach_id;dl.appendChild(o);});
+    if(keep)sel.value=keep;else if(coaches.length)sel.value=coaches[0].coach_id;
+    if(!sel._wired){sel._wired=true;sel.addEventListener('input',function(){clearTimeout(sel._t);sel._t=setTimeout(renderTopology,180);});}
+    var q=sel.value.trim().toLowerCase();
+    var coach=coaches.find(function(c){return c.coach_id.toLowerCase()===q;})||coaches.find(function(c){return c.coach_id.toLowerCase().indexOf(q)>=0;});
+    var cid=coach?coach.coach_id:null;
+    var dc=d.concentrators.find(function(x){return x.coach_id===cid;})||{};
+    var lte=d.lte.find(function(x){return x.coach_id===cid;})||{};
+    var box=$('#topo');box.innerHTML='';
+    if(!coach){box.appendChild(el('div','empty','No coach data yet — push a reading first'));return;}
+    function node(title,sub,color){var n=el('div');n.style.cssText='border:2px solid '+color+';border-radius:12px;padding:12px 16px;min-width:130px;text-align:center;background:var(--panel-2)';
+      var tt=el('div',null,title);tt.style.cssText='font-weight:600;font-size:13px';n.appendChild(tt);
+      if(sub){var s=el('div',null,sub);s.style.cssText='font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:4px';n.appendChild(s);}return n;}
+    function arrow(){var a=el('div',null,'→');a.style.cssText='font-size:22px;color:var(--muted);align-self:center';return a;}
+    var wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:16px';
+    var srow=el('div');srow.style.cssText='display:flex;gap:10px;flex-wrap:wrap;align-items:center';
+    var sl=el('div',null,'Sensors');sl.style.cssText='width:90px;color:var(--muted);font-size:12px';srow.appendChild(sl);
+    coach.tms.forEach(function(t){
+      var col=t.classification==='normal'?'var(--ok)':t.classification==='offline'?'var(--off)':'var(--'+t.classification+')';
+      srow.appendChild(node(t.tm_id||t.sensor_id,(t.temperature==null?'—':t.temperature.toFixed(1)+'°C'),col));
+    });
+    wrap.appendChild(srow);
+    var chain=el('div');chain.style.cssText='display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:6px';
+    var ul=el('div',null,'Uplink');ul.style.cssText='width:90px;color:var(--muted);font-size:12px';chain.appendChild(ul);
+    chain.appendChild(node('Data Concentrator',dc.id||('DC-'+cid),dc.status==='online'?'var(--ok)':'var(--off)'));
+    chain.appendChild(arrow());
+    chain.appendChild(node('LTE Gateway',(lte.imei||lte.id||'')+(lte.signal!=null?' · '+lte.signal+'%':''),lte.status==='online'?'var(--ok)':'var(--off)'));
+    chain.appendChild(arrow());
+    chain.appendChild(node('Cloud',(lte.status==='online'?'connected':'waiting'),'var(--brand)'));
+    wrap.appendChild(chain);box.appendChild(wrap);
+  }
+
+  // ---- Maintenance ----
+  async function renderMaint(){
+    var list=await api('/maintenance');
+    var f=$('#woFilter').value;var shown=f?list.filter(function(m){return m.status===f;}):list;
+    var st=$('#maintStats');st.innerHTML='';
+    [['Total',list.length,'accent'],['Open',list.filter(function(m){return m.status==='open';}).length,'warn'],
+     ['In Progress',list.filter(function(m){return m.status==='in_progress';}).length,''],['Closed',list.filter(function(m){return m.status==='closed';}).length,'ok']].forEach(function(c){
+      var d=el('div','kpi '+(c[2]||''));d.appendChild(el('div','label',c[0]));d.appendChild(el('div','val',c[1]));st.appendChild(d);});
+    var tb=$('#woRows');tb.innerHTML='';$('#woEmpty').style.display=shown.length?'none':'block';
+    var canEdit=['super_admin','depot_admin','maintenance_eng'].indexOf(USER.role)>=0;
+    shown.forEach(function(m){
+      var tr=el('tr');
+      tr.appendChild(el('td',null,'#'+m.id));tr.appendChild(el('td',null,(m.type||'').replace(/_/g,' ')));
+      tr.appendChild(el('td',null,m.coach_id));tr.appendChild(el('td',null,m.title));
+      tr.appendChild(el('td',null,m.assigned_to||'—'));
+      var stt=el('td');var cl=m.status==='closed'?'ok':m.status==='in_progress'?'warn':'crit';
+      var sp=el('span','sev',m.status.replace('_',' '));
+      sp.style.background='var(--'+cl+'-bg)';sp.style.color='var(--'+cl+')';stt.appendChild(sp);tr.appendChild(stt);
+      tr.appendChild(el('td',null,new Date(m.created_at).toLocaleDateString('en-GB')));
+      var ac=el('td');
+      if(canEdit)ac.appendChild(mkBtn('Update',function(){updateWo(m);}));
+      if(['super_admin','depot_admin'].indexOf(USER.role)>=0)ac.appendChild(mkBtn('Delete',function(){if(confirm('Delete #'+m.id+'?'))woCall('/maintenance/'+m.id,'DELETE');}));
+      if(!canEdit)ac.textContent='—';
+      tr.appendChild(ac);tb.appendChild(tr);
+    });
+  }
+  async function woCall(path,method,body){try{await api(path,{method:method,body:body?JSON.stringify(body):undefined});renderMaint();}catch(e){alert(e.message);}}
+  function addWo(){
+    var coach=prompt('Coach id (one you can access):','');if(!coach)return;
+    var type=prompt('Type: work_order / preventive / corrective / calibration / sensor_replacement / battery_replacement','work_order');
+    var title=prompt('Title / description:','');if(!title)return;
+    var assigned=prompt('Assigned to (optional):','');
+    woCall('/maintenance','POST',{coach_id:coach,type:type,title:title,assigned_to:assigned||null});
+  }
+  function updateWo(m){
+    var status=prompt('Status: open / in_progress / closed',m.status);if(!status)return;
+    var notes=prompt('Notes (optional):',m.notes||'');
+    woCall('/maintenance/'+m.id,'PUT',{status:status,notes:notes});
+  }
+
+  // ---- GIS Depot Map (Leaflet + OpenStreetMap) ----
+  var MAP=null,MAP_MARKERS=[];
+  async function renderMap(){
+    var data=await api('/map-data');
+    var withGeo=data.filter(function(d){return d.lat!=null&&d.lng!=null;});
+    var totalCoaches=data.reduce(function(a,d){return a+d.coaches.length;},0);
+    var offline=data.reduce(function(a,d){return a+d.coaches.filter(function(c){return c.status==='offline'||c.status==='no-data';}).length;},0);
+    var k=$('#mapKpis');k.innerHTML='';
+    [['Depots',data.length,'accent'],['On Map',withGeo.length,''],['Coaches',totalCoaches,''],['Offline/No-data',offline,offline?'crit':'ok']].forEach(function(c){
+      var d=el('div','kpi '+(c[2]||''));d.appendChild(el('div','label',c[0]));d.appendChild(el('div','val',c[1]));k.appendChild(d);});
+    if(!window.L){$('#mapNote').textContent='Map library still loading — check your internet connection and retry.';return;}
+    if(!MAP){
+      MAP=L.map('map').setView([22.0,79.0],5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:18}).addTo(MAP);
+    }
+    MAP_MARKERS.forEach(function(m){MAP.removeLayer(m);});MAP_MARKERS=[];
+    withGeo.forEach(function(d){
+      var bad=d.coaches.some(function(c){return c.status==='offline'||c.status==='no-data'||c.worst==='critical'||c.worst==='high';});
+      var color=!d.coaches.length?'#888':(bad?'#dc2626':'#16a34a');
+      var mk=L.circleMarker([d.lat,d.lng],{radius:11,color:color,fillColor:color,fillOpacity:0.85,weight:2});
+      var html='<b>'+d.name+'</b> ('+d.depot_id+')<br>'+(d.region||'')+'<hr style="margin:4px 0">';
+      html+=d.coaches.length?d.coaches.map(function(c){return c.coach_id+' — <b>'+c.status+'</b>'+(c.worst&&c.worst!=='no-data'&&c.worst!=='normal'?' ('+c.worst+')':'');}).join('<br>'):'<i>No coaches assigned</i>';
+      mk.bindPopup(html);mk.addTo(MAP);MAP_MARKERS.push(mk);
+    });
+    setTimeout(function(){try{MAP.invalidateSize();}catch(e){}},120);
+    var noGeo=data.filter(function(d){return d.lat==null||d.lng==null;});
+    $('#noGeo').innerHTML=noGeo.length?('<b>Not on map</b> (add Latitude/Longitude in Admin → Depots): '+noGeo.map(function(d){return d.depot_id;}).join(', ')):'';
+    $('#mapNote').textContent=withGeo.length?'Click a depot marker to see its coaches and status.':'No depot has coordinates yet — add lat/lng in Admin → Depots.';
+  }
+
+  // ---- Predictive early-warning ----
+  async function renderPredict(){
+    var list=await api('/predict');
+    var urgent=list.filter(function(p){return p.risk==='urgent';}).length;
+    var watch=list.filter(function(p){return p.risk==='watch';}).length;
+    var rising=list.filter(function(p){return p.risk==='rising';}).length;
+    var st=$('#predStats');st.innerHTML='';
+    [['Urgent (<15 min)',urgent,urgent?'crit':''],['Watch (<60 min)',watch,watch?'warn':''],['Rising fast',rising,rising?'warn':''],['Sensors tracked',list.length,'accent']].forEach(function(c){
+      var d=el('div','kpi '+(c[2]||''));d.appendChild(el('div','label',c[0]));d.appendChild(el('div','val',c[1]));st.appendChild(d);});
+    // show only meaningful rows (rising / heading to critical), else a few
+    var shown=list.filter(function(p){return p.risk!=='stable'&&p.risk!=='cooling';});
+    if(!shown.length)shown=list.slice(0,8);
+    var tb=$('#predRows');tb.innerHTML='';$('#predEmpty').style.display=list.length?'none':'block';
+    var riskColor={urgent:'crit',watch:'warn',rising:'warn',stable:'ok',cooling:'ok'};
+    shown.forEach(function(p){
+      var tr=el('tr');
+      tr.appendChild(el('td',null,p.tm_id||p.sensor_id));tr.appendChild(el('td',null,p.coach_id||'—'));tr.appendChild(el('td',null,p.emu_id||'—'));
+      tr.appendChild(el('td',null,p.temperature.toFixed(1)+'°C'));
+      tr.appendChild(el('td',null,(p.rate>0?'+':'')+p.rate+' °C/min'));
+      tr.appendChild(el('td',null,p.mins_to_crit==null?'—':(p.mins_to_crit<=0?'now':'~'+p.mins_to_crit+' min')));
+      var rc=el('td');var cl=riskColor[p.risk]||'ok';var sp=el('span','sev',p.risk);
+      sp.style.background='var(--'+cl+'-bg)';sp.style.color='var(--'+cl+')';rc.appendChild(sp);tr.appendChild(rc);
+      tb.appendChild(tr);
+    });
+    // prognostics
+    var pg=await api('/prognostics');var pt=$('#progRows');pt.innerHTML='';
+    $('#progEmpty').style.display=pg.length?'none':'block';
+    var vColor={'thermal-risk':'crit','battery-low':'warn','watch':'warn','offline':'off','healthy':'ok'};
+    pg.forEach(function(p){
+      var tr=el('tr');
+      tr.appendChild(el('td',null,p.tm_id||p.sensor_id));tr.appendChild(el('td',null,p.coach_id||'—'));
+      tr.appendChild(el('td',null,p.battery==null?'—':p.battery+'%'));
+      tr.appendChild(el('td',null,p.batt_rate_per_day==null?'—':p.batt_rate_per_day+'%/day'));
+      tr.appendChild(el('td',null,p.batt_days_left==null?'—':(p.batt_days_left>=365?'>1yr':p.batt_days_left+' days')));
+      tr.appendChild(el('td',null,(p.base_avg==null?'—':p.base_avg+'°')+' → '+(p.recent_avg==null?'—':p.recent_avg+'°')));
+      tr.appendChild(el('td',null,p.peak==null?'—':p.peak+'°'));
+      tr.appendChild(el('td',null,p.thermal_trend));
+      var vc=el('td');var cl=vColor[p.verdict]||'ok';var sp=el('span','sev',p.verdict);
+      sp.style.background='var(--'+cl+'-bg)';sp.style.color='var(--'+cl+')';vc.appendChild(sp);tr.appendChild(vc);
+      pt.appendChild(tr);
+    });
+    // peer anomalies
+    var an=await api('/anomalies');var at=$('#anomRows');at.innerHTML='';
+    $('#anomEmpty').style.display=an.length?'none':'block';
+    an.forEach(function(a){
+      var tr=el('tr');
+      tr.appendChild(el('td',null,a.tm_id||a.sensor_id));tr.appendChild(el('td',null,a.coach_id||'—'));
+      tr.appendChild(el('td',null,a.temperature+'°'));tr.appendChild(el('td',null,a.peer_median+'°'));
+      var dc=el('td');var sp=el('span','sev','+'+a.deviation+'°');sp.style.background='var(--warn-bg)';sp.style.color='var(--warn)';dc.appendChild(sp);tr.appendChild(dc);
+      tr.appendChild(el('td',null,a.reason));at.appendChild(tr);
+    });
+  }
+
+  // ---- Wallboard / control-room mode ----
+  var WALL=null,WALL_I=0,WALL_VIEWS=['overview','critical','devices'];
+  function enterWall(){$('#wallboard').style.display='block';WALL_I=0;wallTick();if(WALL)clearInterval(WALL);WALL=setInterval(wallTick,8000);}
+  function exitWall(){$('#wallboard').style.display='none';if(WALL)clearInterval(WALL);WALL=null;}
+  async function wallTick(){
+    $('#wallClock').textContent=new Date().toLocaleTimeString('en-GB');
+    var mode=WALL_VIEWS[WALL_I%WALL_VIEWS.length];WALL_I++;
+    $('#wallView').textContent='Auto-rotating · '+mode.toUpperCase();
+    var body=$('#wallBody');
+    try{
+      if(mode==='overview'){
+        var k=await api('/overview');body.innerHTML='';
+        var g=el('div');g.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px';
+        [['EMUs',k.total_emus,'accent'],['Coaches',k.total_coaches,''],['Sensors Online',k.online_sensors,'ok'],['Offline',k.offline_sensors,k.offline_sensors?'crit':''],['Warning TMs',k.warning_tms,k.warning_tms?'warn':''],['Critical TMs',k.critical_tms,k.critical_tms?'crit':''],['Active Alerts',k.active_alerts,k.active_alerts?'crit':''],['Avg Temp',k.avg_fleet_temp==null?'—':k.avg_fleet_temp+'°C','accent']].forEach(function(c){
+          var d=el('div','kpi '+(c[2]||''));d.style.padding='26px';d.appendChild(el('div','label',c[0]));var v=el('div','val',c[1]);v.style.fontSize='46px';d.appendChild(v);g.appendChild(d);});
+        body.appendChild(g);
+      } else if(mode==='critical'){
+        var a=await api('/alerts?state=active');body.innerHTML='';
+        var h=el('div',null,'Active Alerts ('+a.length+')');h.style.cssText='font-size:20px;font-weight:600;margin-bottom:14px';body.appendChild(h);
+        if(!a.length){var ok=el('div','empty','✓ All clear — no active alerts');ok.style.fontSize='18px';body.appendChild(ok);}
+        else{var p=el('div','panel');var t=el('table');t.innerHTML='<thead><tr><th>Severity</th><th>EMU</th><th>Coach</th><th>Detail</th><th>Time</th></tr></thead>';var tbb=el('tbody');
+          a.slice(0,12).forEach(function(x){var tr=el('tr');var s=el('td');s.appendChild(el('span','sev '+x.severity,x.severity));tr.appendChild(s);
+            [x.emu_id||'—',x.coach_id||'—',x.message,new Date(x.at).toLocaleTimeString('en-GB')].forEach(function(v){tr.appendChild(el('td',null,v));});tbb.appendChild(tr);});
+          t.appendChild(tbb);p.appendChild(t);body.appendChild(p);}
+      } else {
+        var d=await api('/devices');body.innerHTML='';
+        var dcOn=d.concentrators.filter(function(x){return x.status==='online';}).length;var lteOn=d.lte.filter(function(x){return x.status==='online';}).length;
+        var g=el('div');g.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px';
+        [['Concentrators',d.concentrators.length,'accent'],['DC Online',dcOn,'ok'],['LTE Modules',d.lte.length,'accent'],['LTE Online',lteOn,'ok']].forEach(function(c){
+          var x=el('div','kpi '+(c[2]||''));x.style.padding='26px';x.appendChild(el('div','label',c[0]));var v=el('div','val',c[1]);v.style.fontSize='46px';x.appendChild(v);g.appendChild(x);});
+        body.appendChild(g);
+      }
+    }catch(e){}
+  }
+
+  $('#alertFilter').addEventListener('change',renderAlerts);
+  async function renderAlerts(){
+    var state=$('#alertFilter').value;var list=await api('/alerts'+(state?('?state='+state):''));
+    var tb=$('#alertRows');tb.innerHTML='';$('#alertEmpty').style.display=list.length?'none':'block';
+    var canAck=['super_admin','railway_hq','depot_admin','maintenance_eng'].indexOf(USER.role)>=0;
+    list.forEach(function(a){
+      var tr=el('tr');tr.appendChild(el('td',null,'#'+a.id));
+      var s=el('td');s.appendChild(el('span','sev '+a.severity,a.severity.replace('_',' ')));tr.appendChild(s);
+      tr.appendChild(el('td',null,(a.emu_id||'—')+' / '+(a.coach_id||'—')));tr.appendChild(el('td',null,a.message));
+      tr.appendChild(el('td',null,new Date(a.at).toLocaleTimeString('en-GB')));
+      var st=el('td');st.appendChild(el('span','state '+a.state,a.state));tr.appendChild(st);
+      var ac=el('td');
+      if(a.state==='active'&&canAck){var btn=el('button','mini','Acknowledge');btn.addEventListener('click',async function(){try{await api('/alerts/'+a.id+'/ack',{method:'POST'});renderAlerts();updateBadge();}catch(err){alert(err.message);}});ac.appendChild(btn);}
+      else if(a.acknowledged_by){ac.appendChild(el('span','state','by '+a.acknowledged_by));}
+      tr.appendChild(ac);tb.appendChild(tr);
+    });
+  }
+
+  async function renderAnalytics(){
+    var emus=await api('/emus');var box=$('#sensorChecks');var sensors=[];
+    emus.forEach(function(e){e.coaches.forEach(function(c){c.tms.forEach(function(t){sensors.push({id:t.sensor_id,label:c.coach_id+'·'+(t.tm_id||t.sensor_id)});});});});
+    if(!CMP.length&&sensors.length)CMP=sensors.slice(0,3).map(function(s){return s.id;});
+    box.innerHTML='';
+    sensors.forEach(function(s){
+      var id='ck_'+s.id;var w=el('label',null);w.style.cssText='font-family:var(--mono);font-size:12px;display:inline-flex;gap:5px;align-items:center;border:1px solid var(--line);padding:4px 8px;border-radius:7px;cursor:pointer';
+      var ck=el('input');ck.type='checkbox';ck.checked=CMP.indexOf(s.id)>=0;
+      ck.addEventListener('change',function(){if(ck.checked){if(CMP.length<6)CMP.push(s.id);else ck.checked=false;}else CMP=CMP.filter(function(x){return x!==s.id;});drawCompare();});
+      w.appendChild(ck);w.appendChild(document.createTextNode(s.label));box.appendChild(w);
+    });
+    drawCompare();
+  }
+  async function drawCompare(){
+    var svg=d3.select('#chart2');svg.selectAll('*').remove();$('#cmpLegend').innerHTML='';
+    var box=$('#chart2').getBoundingClientRect();var W=box.width||800,H=340,m={t:16,r:18,b:30,l:42};svg.attr('viewBox','0 0 '+W+' '+H);
+    if(!CMP.length){svg.append('text').attr('x',W/2).attr('y',H/2).attr('fill','#8a96aa').attr('text-anchor','middle').text('Tick one or more sensors to compare');return;}
+    var k=await api('/overview');var th=k.thresholds;var seriesList=[];
+    for(var i=0;i<CMP.length;i++){var d=await api('/series/'+encodeURIComponent(CMP[i]));seriesList.push({id:CMP[i],pts:d.map(function(p){return{t:new Date(p.t),v:p.temperature};}).filter(function(p){return p.v!=null;})});}
+    var all=[].concat.apply([],seriesList.map(function(s){return s.pts;}));
+    if(!all.length){svg.append('text').attr('x',W/2).attr('y',H/2).attr('fill','#8a96aa').attr('text-anchor','middle').text('No samples yet');return;}
+    var x=d3.scaleTime().domain(d3.extent(all,function(d){return d.t;})).range([m.l,W-m.r]);
+    var y=d3.scaleLinear().domain([Math.min(d3.min(all,function(d){return d.v;})-3,20),Math.max(d3.max(all,function(d){return d.v;}),th.crit+5)]).range([H-m.b,m.t]);
+    svg.append('g').attr('class','axis').attr('transform','translate(0,'+(H-m.b)+')').call(d3.axisBottom(x).ticks(6).tickFormat(d3.timeFormat('%H:%M:%S')));
+    svg.append('g').attr('class','axis').attr('transform','translate('+m.l+',0)').call(d3.axisLeft(y).ticks(6));
+    [[th.warn,'#d97706'],[th.high,'#ea580c'],[th.crit,'#dc2626']].forEach(function(b){svg.append('line').attr('class','thline').attr('x1',m.l).attr('x2',W-m.r).attr('y1',y(b[0])).attr('y2',y(b[0])).attr('stroke',b[1]);});
+    var line=d3.line().x(function(d){return x(d.t);}).y(function(d){return y(d.v);}).curve(d3.curveMonotoneX);
+    seriesList.forEach(function(s,i){var col=PALETTE[i%PALETTE.length];svg.append('path').datum(s.pts).attr('fill','none').attr('stroke',col).attr('stroke-width',2).attr('d',line);
+      var lg=el('span',null);lg.appendChild(el('i','swatch'));lg.querySelector('.swatch').style.background=col;lg.appendChild(document.createTextNode(' '+s.id));$('#cmpLegend').appendChild(lg);});
+  }
+
+  async function renderSwap(){
+    var coaches=await api('/coaches');var emus=await api('/emus');var emuIds=emus.map(function(e){return e.emu_id;});
+    var tb=$('#coachRows');tb.innerHTML='';$('#coachEmpty').style.display=coaches.length?'none':'block';
+    var canSwap=['super_admin','depot_admin','maintenance_eng'].indexOf(USER.role)>=0;
+    coaches.forEach(function(c){
+      var tr=el('tr');tr.appendChild(el('td',null,c.coach_id));tr.appendChild(el('td',null,c.emu_id||'—'));tr.appendChild(el('td',null,c.position||'—'));tr.appendChild(el('td',null,c.since?new Date(c.since).toLocaleString('en-GB'):'—'));
+      var act=el('td');
+      if(canSwap){var btn=el('button','mini','Reassign');btn.addEventListener('click',function(){swapDialog(c,emuIds);});act.appendChild(btn);}
+      var hist=el('button','mini','History');hist.style.marginLeft='6px';hist.addEventListener('click',function(){loadHistory(c.coach_id);});act.appendChild(hist);
+      tr.appendChild(act);tb.appendChild(tr);
+    });
+    if(SELECTED_COACH)loadHistory(SELECTED_COACH);
+  }
+  async function swapDialog(c,emuIds){
+    var target=prompt('Reassign '+c.coach_id+' to EMU (existing or new id):',emuIds.find(function(x){return x!==c.emu_id;})||'EMU-02');if(!target)return;
+    var pos=prompt('Position in '+target+' (1-4):',c.position||'1');var reason=prompt('Reason for swap:','Scheduled maintenance');
+    try{await api('/coaches/'+encodeURIComponent(c.coach_id)+'/assign',{method:'POST',body:JSON.stringify({emu_id:target,position:pos,reason:reason})});renderSwap();}catch(err){alert(err.message);}
+  }
+  async function loadHistory(coachId){
+    SELECTED_COACH=coachId;var h=await api('/coaches/'+encodeURIComponent(coachId)+'/history');
+    $('#histLabel').textContent='Audit trail for '+coachId;var tb=$('#histRows');tb.innerHTML='';$('#histEmpty').style.display=h.length?'none':'block';
+    h.forEach(function(s){var tr=el('tr');[s.coach_id,s.from_emu||'—',s.to_emu,s.position||'—',s.user,s.reason||'—',new Date(s.at).toLocaleString('en-GB')].forEach(function(v){tr.appendChild(el('td',null,v));});tb.appendChild(tr);});
+  }
+
+  var _adminBound=false;
+  function bindAdminOnce(){
+    if(_adminBound)return;_adminBound=true;
+    $('#thSave').addEventListener('click',saveThresholds);
+    $('#addUserBtn').addEventListener('click',addUser);
+    $('#addEmuBtn').addEventListener('click',addEmu);
+    $('#addCoachBtn').addEventListener('click',addCoach);
+    $('#tplSave').addEventListener('click',saveTemplates);
+    $('#testSend').addEventListener('click',sendTestNotif);
+    $('#rpSave').addEventListener('click',saveReportSchedule);
+    $('#rpSend').addEventListener('click',sendReportNow);
+    $('#addDepotBtn').addEventListener('click',function(){editDepot(null);});
+    $('#addDeviceBtn').addEventListener('click',function(){editDevice(null);});
+    $('#backupBtn').addEventListener('click',function(){download('/backup','raip_backup.json').catch(function(e){alert(e.message);});});
+    $('#restoreBtn').addEventListener('click',function(){$('#restoreFile').click();});
+    $('#restoreFile').addEventListener('change',doRestore);
+    $('#bulkBtn').addEventListener('click',doBulkImport);
+    $('#refreshStatus').addEventListener('click',renderSysStatus);
+  }
+  function isAdmin(){return USER&&USER.role==='super_admin';}
+
+  async function renderAdmin(){
+    var ro=!isAdmin();
+    $('#adminScopeNote').textContent=ro?'Read-only view — editing requires Super Admin':'Super Admin · full master-data control';
+    ['addUserBtn','addEmuBtn','addCoachBtn','thSave','addDepotBtn','bulkBtn','addDeviceBtn'].forEach(function(id){$('#'+id).style.display=ro?'none':'';});
+    // thresholds
+    var th=await api('/thresholds');
+    $('#thWarn').value=th.CFG_WARN_TEMP;$('#thHigh').value=th.CFG_HIGH_TEMP;$('#thCrit').value=th.CFG_CRIT_TEMP;
+    $('#thOff').value=th.CFG_OFFLINE_SECONDS;$('#thBat').value=th.CFG_LOW_BATTERY;$('#thRise').value=th.CFG_RISE_RATE!=null?th.CFG_RISE_RATE:3;
+    $('#thLog').value=th.CFG_LOG_INTERVAL!=null?th.CFG_LOG_INTERVAL:20;
+    ['thWarn','thHigh','thCrit','thOff','thBat','thRise','thLog'].forEach(function(id){$('#'+id).disabled=ro;});
+    // users
+    var users=await api('/users');var tu=$('#adminUsers');tu.innerHTML='';
+    var GLOBAL_ROLES=['super_admin','railway_hq'];
+    users.forEach(function(u){
+      var isGlobal=GLOBAL_ROLES.indexOf(u.role)>=0;
+      var emuCell=isGlobal?'ALL (auto)':((u.emus||[]).join(', ')||'—');
+      var coachCell=isGlobal?'ALL (auto)':((u.coaches||[]).join(', ')||'—');
+      var tr=el('tr');[u.username,ROLE_LABELS[u.role]||u.role,u.email||'—',u.phone||'—',emuCell,coachCell].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var ac=el('td');
+      if(!ro){
+        if(!isGlobal)ac.appendChild(mkBtn('Assets',function(){assignAssets(u);}));
+        ac.appendChild(mkBtn('Edit',function(){editUser(u);}));
+        ac.appendChild(mkBtn('Delete',function(){delUser(u);}));
+      } else ac.textContent='—';
+      tr.appendChild(ac);tu.appendChild(tr);
+    });
+    // emus
+    var assets=await api('/assets');var te=$('#adminEmus');te.innerHTML='';
+    assets.emus.forEach(function(e){
+      var tr=el('tr');[e.emu_id,e.name||'—',e.depot_id||'—'].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var ac=el('td');
+      if(!ro){ac.appendChild(mkBtn('Edit',function(){editEmu(e);}));ac.appendChild(mkBtn('Delete',function(){delEmu(e);}));}else ac.textContent='—';
+      tr.appendChild(ac);te.appendChild(tr);
+    });
+    // coaches
+    var tc=$('#adminCoaches');tc.innerHTML='';
+    assets.coaches.forEach(function(c){
+      var tr=el('tr');[c.coach_id,c.emu_id||'—',c.position||'—',(c.architecture||'wireless'),c.rut200_ip||'—',c.rut200_port||'—',c.rut200_path||'—',c.poll_enabled?'on':'off'].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var ac=el('td');
+      if(!ro){ac.appendChild(mkBtn('Edit',function(){editCoach(c);}));ac.appendChild(mkBtn('Delete',function(){delCoach(c);}));}else ac.textContent='—';
+      tr.appendChild(ac);tc.appendChild(tr);
+    });
+    // sensor registry
+    var reg=await api('/sensor-registry');var ts=$('#adminSensors');ts.innerHTML='';
+    $('#sensorEmpty').style.display=reg.length?'none':'block';
+    reg.forEach(function(s){
+      var tr=el('tr');[s.sensor_id,s.coach_id||'—',s.serial_no||'—',s.calibration_date||'—',s.firmware||'—',s.warranty||'—'].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var ac=el('td');if(!ro)ac.appendChild(mkBtn('Edit',function(){editSensor(s);}));else ac.textContent='—';
+      tr.appendChild(ac);ts.appendChild(tr);
+    });
+    // depots
+    var depots=await api('/depots');var td=$('#adminDepots');td.innerHTML='';
+    $('#depotEmpty').style.display=depots.length?'none':'block';
+    depots.forEach(function(dp){
+      var tr=el('tr');[dp.depot_id,dp.name,dp.region||'—',dp.lat==null?'—':dp.lat,dp.lng==null?'—':dp.lng,dp.emu_count,dp.coach_count].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var ac=el('td');if(!ro){ac.appendChild(mkBtn('Edit',function(){editDepot(dp);}));ac.appendChild(mkBtn('Delete',function(){if(confirm('Delete depot '+dp.depot_id+'?'))adminCall('/depots/'+dp.depot_id,'DELETE');}));}else ac.textContent='—';
+      tr.appendChild(ac);td.appendChild(tr);
+    });
+    renderSysStatus();
+    // field devices
+    var devs=await api('/devices-registry');var tdv=$('#adminDevices');tdv.innerHTML='';
+    $('#deviceEmpty').style.display=devs.length?'none':'block';
+    devs.forEach(function(dv){
+      var tr=el('tr');
+      [dv.device_id,dv.coach_id||'—',dv.emu_id||'—',[dv.tag1,dv.tag2,dv.tag3,dv.tag4].join(', '),
+        dv.post_interval_override?(dv.post_interval_override+'s (override)'):'global',
+        dv.enabled===false?'No':'Yes',dv.last_seen?ago(dv.last_seen):'never'].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var ac=el('td');
+      if(!ro){ac.appendChild(mkBtn('Edit',function(){editDevice(dv);}));ac.appendChild(mkBtn('Delete',function(){if(confirm('Delete device '+dv.device_id+'?'))adminCall('/devices-registry/'+dv.device_id,'DELETE');}));}else ac.textContent='—';
+      tr.appendChild(ac);tdv.appendChild(tr);
+    });
+  }
+  function editDevice(dv){
+    var id=dv?dv.device_id:prompt('Device ID (must match DEVICE_ID in the RUT script, e.g. DEV-01):','');if(!id)return;
+    var coach=prompt('Assign to Coach id (e.g. MC-01):',dv?(dv.coach_id||''):'');if(coach===null)return;
+    var emu=prompt('EMU id (e.g. EMU-01):',dv?(dv.emu_id||''):'');
+    var tags=prompt('Modbus tags for TM1,TM2,TM3,TM4 (comma separated):',dv?[dv.tag1,dv.tag2,dv.tag3,dv.tag4].join(','):'1.3,1.4,1.5,1.6');
+    var iv=prompt('Per-device interval OVERRIDE in seconds — leave blank to use the global\n"Log interval (s)" from Admin → Thresholds (recommended):',dv?(dv.post_interval_override||''):'');
+    var en=confirm('Enabled? OK = enabled, Cancel = disabled');
+    var t=(tags||'1.3,1.4,1.5,1.6').split(',').map(function(x){return x.trim();});
+    adminCall('/devices-registry'+(dv?'/'+dv.device_id:''),dv?'PUT':'POST',{device_id:id,coach_id:coach,emu_id:emu,tag1:t[0],tag2:t[1],tag3:t[2],tag4:t[3],post_interval_override:iv?+iv:null,enabled:en});
+  }
+  async function renderSysStatus(){
+    try{var st=await api('/system-status');var k=$('#sysKpis');k.innerHTML='';
+      var up=st.uptime_seconds,uph=up>=3600?Math.floor(up/3600)+'h':up>=60?Math.floor(up/60)+'m':up+'s';
+      [['Database',st.db,st.db.indexOf('Postgres')>=0?'ok':'warn'],['Sensors Online',st.sensors_online,'ok'],['Sensors Offline',st.sensors_offline,st.sensors_offline?'crit':''],['Readings Ingested',st.total_readings_ingested,'accent'],['Uptime',uph,''],['Active Alerts',st.active_alerts,st.active_alerts?'crit':'']].forEach(function(c){
+        var d=el('div','kpi '+(c[2]||''));d.appendChild(el('div','label',c[0]));d.appendChild(el('div','val',c[1]));k.appendChild(d);});
+      var tb=$('#sysCoaches');tb.innerHTML='';
+      st.coach_status.forEach(function(c){
+        var tr=el('tr');tr.appendChild(el('td',null,c.coach_id));tr.appendChild(el('td',null,c.emu_id||'—'));
+        var stt=el('td');var cl=c.status==='online'?'ok':c.status==='offline'?'crit':'warn';var sp=el('span','sev',c.status);sp.style.background='var(--'+cl+'-bg)';sp.style.color='var(--'+cl+')';stt.appendChild(sp);tr.appendChild(stt);
+        tr.appendChild(el('td',null,c.sensors));tr.appendChild(el('td',null,c.last_comm?ago(c.last_comm):'never'));tb.appendChild(tr);
+      });
+    }catch(e){}
+  }
+  function editDepot(dp){
+    var id=dp?dp.depot_id:prompt('Depot ID (e.g. HWH):','');if(!id)return;
+    var name=prompt('Depot name:',dp?dp.name:'');if(name===null)return;
+    var region=prompt('Region / Railway zone:',dp?(dp.region||''):'');
+    var lat=prompt('Latitude (optional, for map):',dp?(dp.lat||''):'');
+    var lng=prompt('Longitude (optional, for map):',dp?(dp.lng||''):'');
+    adminCall('/depots'+(dp?'/'+dp.depot_id:''),dp?'PUT':'POST',{depot_id:id,name:name,region:region,lat:lat,lng:lng});
+  }
+  async function doRestore(ev){
+    var file=ev.target.files&&ev.target.files[0];if(!file)return;
+    if(!confirm('Restore will REPLACE current master data (users, EMUs, coaches, depots, devices, config) with this backup. Continue?')){ev.target.value='';return;}
+    try{
+      var text=await file.text();var snap=JSON.parse(text);
+      var r=await api('/restore',{method:'POST',body:JSON.stringify(snap)});
+      $('#backupNote').textContent='Restored: '+r.restored.users+' users, '+r.restored.emus+' EMUs, '+r.restored.coaches+' coaches, '+r.restored.depots+' depots, '+r.restored.devices+' devices.';
+      renderAdmin();
+    }catch(e){$('#backupNote').textContent='Restore failed: '+e.message;}
+    ev.target.value='';
+  }
+  async function doBulkImport(){
+    var lines=$('#bulkText').value.split('\n').map(function(l){return l.trim();}).filter(Boolean);
+    var coaches=lines.map(function(l){var p=l.split(',').map(function(x){return x.trim();});return {coach_id:p[0],emu_id:p[1]||null,position:p[2]||null};});
+    if(!coaches.length){alert('Enter at least one coach');return;}
+    try{var r=await api('/coaches/bulk',{method:'POST',body:JSON.stringify({coaches:coaches})});
+      $('#bulkNote').textContent=r.created+' created'+(r.errors.length?(', '+r.errors.length+' failed'):'');
+      $('#bulkText').value='';renderAdmin();}
+    catch(e){$('#bulkNote').textContent='Error: '+e.message;}
+  }
+  function editSensor(s){
+    var serial=prompt('Serial number for '+s.sensor_id+':',s.serial_no||'');if(serial===null)return;
+    var cal=prompt('Calibration date (YYYY-MM-DD):',s.calibration_date||'');
+    var fw=prompt('Firmware version:',s.firmware||'');
+    var wty=prompt('Warranty (date or text):',s.warranty||'');
+    adminCall('/sensor-registry/'+encodeURIComponent(s.sensor_id),'PUT',{serial_no:serial,calibration_date:cal,firmware:fw,warranty:wty});
+  }
+  function mkBtn(label,fn){var b=el('button','mini',label);b.style.marginRight='6px';b.addEventListener('click',fn);return b;}
+  async function adminCall(path,method,body){
+    try{await api(path,{method:method,body:body?JSON.stringify(body):undefined});renderAdmin();}
+    catch(e){alert(e.message);}
+  }
+
+  async function saveThresholds(){
+    var body={CFG_WARN_TEMP:+$('#thWarn').value,CFG_HIGH_TEMP:+$('#thHigh').value,CFG_CRIT_TEMP:+$('#thCrit').value,
+      CFG_OFFLINE_SECONDS:+$('#thOff').value,CFG_LOW_BATTERY:+$('#thBat').value,CFG_RISE_RATE:+$('#thRise').value,
+      CFG_LOG_INTERVAL:Math.max(5,+$('#thLog').value||20)};
+    try{await api('/thresholds',{method:'PUT',body:JSON.stringify(body)});THRESH_CACHE=null;$('#thSave').textContent='Saved ✓';setTimeout(function(){$('#thSave').textContent='Save thresholds';},1500);}
+    catch(e){alert(e.message);}
+  }
+  function addUser(){
+    var username=prompt('New username:');if(!username)return;
+    var password=prompt('Password for '+username+' (min 8 chars):');if(!password)return;
+    var role=prompt('Role: super_admin / railway_hq / depot_admin / maintenance_eng / observer','maintenance_eng');if(!role)return;
+    var depot=prompt('Depot id (optional):','');
+    var email=prompt('Email (for reports & alerts):','');
+    var phone=prompt('Mobile (for SMS alerts, e.g. 98xxxxxxxx):','');
+    adminCall('/users','POST',{username:username,password:password,role:role,depot_id:depot||null,email:email||null,phone:phone||null});
+  }
+  function editUser(u){
+    var role=prompt('Role for '+u.username+':',u.role);if(!role)return;
+    var depot=prompt('Depot id (blank for none):',u.depot_id||'');
+    var email=prompt('Email (for reports & alerts):',u.email||'');
+    var phone=prompt('Mobile (for SMS alerts):',u.phone||'');
+    var pw=prompt('New password (blank = keep current):','');
+    var body={role:role,depot_id:depot,email:email,phone:phone};if(pw)body.password=pw;
+    adminCall('/users/'+encodeURIComponent(u.username),'PUT',body);
+  }
+  function delUser(u){if(confirm('Delete user '+u.username+'?'))adminCall('/users/'+encodeURIComponent(u.username),'DELETE');}
+  function assignAssets(u){
+    var emus=prompt('Assigned EMUs for '+u.username+' (comma separated ids):',(u.emus||[]).join(','));
+    if(emus===null)return;
+    var coaches=prompt('Assigned coaches (comma separated ids):',(u.coaches||[]).join(','));
+    if(coaches===null)return;
+    function arr(s){return s.split(',').map(function(x){return x.trim();}).filter(Boolean);}
+    adminCall('/users/'+encodeURIComponent(u.username)+'/assets','PUT',{emus:arr(emus),coaches:arr(coaches)});
+  }
+  function addEmu(){
+    var id=prompt('New EMU id (e.g. EMU-10):');if(!id)return;
+    var name=prompt('Name:',id);var depot=prompt('Depot id (optional):','');
+    adminCall('/emus','POST',{emu_id:id,name:name||id,depot_id:depot||null});
+  }
+  function editEmu(e){var name=prompt('Name for '+e.emu_id+':',e.name||'');if(name===null)return;var depot=prompt('Depot id:',e.depot_id||'');adminCall('/emus/'+encodeURIComponent(e.emu_id),'PUT',{name:name,depot_id:depot});}
+  function delEmu(e){if(confirm('Delete '+e.emu_id+'? Its coaches will be unassigned.'))adminCall('/emus/'+encodeURIComponent(e.emu_id),'DELETE');}
+  function addCoach(){
+    var id=prompt('New coach id (e.g. MC-110):');if(!id)return;
+    var emu=prompt('Assign to EMU id (optional):','');var pos=prompt('Position 1-4 (optional):','');
+    var arch=prompt('Sensor architecture: wired / wireless / hybrid','wireless');
+    var ip=prompt('RUT200 IP address (optional):','');
+    var port=prompt('RUT200 port:','80');var path=prompt('RUT200 data path:','/readings');
+    var poll=confirm('Enable polling this RUT200 by IP? OK = yes, Cancel = no');
+    adminCall('/coach','POST',{coach_id:id,emu_id:emu||undefined,position:pos||undefined,architecture:arch||'wireless',rut200_ip:ip||null,rut200_port:port,rut200_path:path,poll_enabled:poll});
+  }
+  function editCoach(c){
+    var name=prompt('Name for '+c.coach_id+':',c.name||'');if(name===null)return;
+    var arch=prompt('Sensor architecture: wired / wireless / hybrid',c.architecture||'wireless');
+    var conc=prompt('Data Concentrator ID:',c.concentrator_id||('DC-'+c.coach_id));
+    var imei=prompt('LTE module IMEI:',c.lte_imei||'');var sim=prompt('LTE SIM number:',c.lte_sim||'');
+    var lip=prompt('LTE IP address:',c.lte_ip||'');
+    var ip=prompt('RUT200 IP (for pull mode):',c.rut200_ip||'');var port=prompt('RUT200 port:',c.rut200_port||80);
+    var path=prompt('RUT200 path:',c.rut200_path||'/readings');var poll=confirm('Enable RUT200 IP polling? OK = yes, Cancel = no');
+    adminCall('/coach/'+encodeURIComponent(c.coach_id),'PUT',{name:name,architecture:arch,concentrator_id:conc||null,lte_imei:imei||null,lte_sim:sim||null,lte_ip:lip||null,rut200_ip:ip||null,rut200_port:port,rut200_path:path,poll_enabled:poll});
+  }
+  function delCoach(c){if(confirm('Delete coach '+c.coach_id+'?'))adminCall('/coach/'+encodeURIComponent(c.coach_id),'DELETE');}
+
+  // ---- Notifications ----
+  var SEVERITIES=['warning','high','critical','rapid_rise','offline','low_battery'];
+  function csv(a){return (a||[]).join(', ');}
+  function arr(s){return (s||'').split(',').map(function(x){return x.trim();}).filter(Boolean);}
+  async function renderNotify(){
+    var ro=!isAdmin();
+    $('#notifyScopeNote').textContent=ro?'Read-only — editing requires Super Admin':'Super Admin · full notification control';
+    ['tplSave','testSend'].forEach(function(id){$('#'+id).style.display=ro?'none':'';});
+    var cfg=await api('/alert-config');var stats=await api('/notifications/stats');
+    // stats cards
+    var sc=$('#notifyStats');sc.innerHTML='';
+    [['Total Sent',stats.total,'accent'],['SMS',stats.sms,''],['Emails',stats.email,''],['Delivered',stats.ok,'ok'],['Failed',stats.failed,stats.failed?'crit':''],['Success Rate',stats.success_rate,'accent','%']].forEach(function(c){
+      var d=el('div','kpi '+(c[2]||''));d.appendChild(el('div','label',c[0]));var v=el('div','val'+(c[3]?' unit':''),c[1]);if(c[3])v.dataset.unit=c[3];d.appendChild(v);sc.appendChild(d);});
+    // rules
+    var tr=$('#ruleRows');tr.innerHTML='';
+    SEVERITIES.forEach(function(sev){
+      var r=cfg.rules[sev]||{channels:[],emails:[],phones:[],escalate_to:'',escalate_after_min:0};
+      var row=el('tr');
+      row.appendChild(el('td',null,sev.replace('_',' ')));
+      row.appendChild(el('td',null,(r.channels||[]).indexOf('email')>=0?'✓':'—'));
+      row.appendChild(el('td',null,(r.channels||[]).indexOf('sms')>=0?'✓':'—'));
+      row.appendChild(el('td',null,csv(r.emails)||'—'));
+      row.appendChild(el('td',null,csv(r.phones)||'—'));
+      row.appendChild(el('td',null,r.escalate_to||'—'));
+      row.appendChild(el('td',null,r.escalate_after_min||'0'));
+      var ac=el('td');if(!ro)ac.appendChild(mkBtn('Edit',function(){editRule(sev,r);}));else ac.textContent='—';
+      row.appendChild(ac);tr.appendChild(row);
+    });
+    // tiers
+    var tt=$('#tierRows');tt.innerHTML='';
+    Object.keys(cfg.escalation_tiers).forEach(function(k){
+      var t=cfg.escalation_tiers[k];var row=el('tr');
+      [k,t.name||'',csv(t.emails)||'—',csv(t.phones)||'—'].forEach(function(v){row.appendChild(el('td',null,v));});
+      var ac=el('td');if(!ro)ac.appendChild(mkBtn('Edit',function(){editTier(k,t);}));else ac.textContent='—';
+      row.appendChild(ac);tt.appendChild(row);
+    });
+    // templates
+    $('#tplSms').value=cfg.templates.sms;$('#tplSub').value=cfg.templates.email_subject;$('#tplBody').value=cfg.templates.email_body;
+    ['tplSms','tplSub','tplBody','testCh','testTo'].forEach(function(id){$('#'+id).disabled=ro&&id.indexOf('tpl')===0;});
+    // daily report schedule
+    var rp=cfg.report||{enabled:false,hour:7,emails:[],base_url:''};
+    $('#rpEnabled').value=rp.enabled?'yes':'no';$('#rpHour').value=rp.hour!=null?rp.hour:7;
+    $('#rpEmails').value=(rp.emails||[]).join(', ');$('#rpBase').value=rp.base_url||'';
+    ['rpEnabled','rpHour','rpEmails','rpBase','rpSave','rpSend'].forEach(function(id){$('#'+id).disabled=ro;});
+    // log
+    var log=await api('/notifications');var lb=$('#notifyLog');lb.innerHTML='';
+    $('#notifyLogEmpty').style.display=log.length?'none':'block';
+    log.slice(0,100).forEach(function(n){
+      var row=el('tr');
+      row.appendChild(el('td',null,new Date(n.at).toLocaleTimeString('en-GB')));
+      row.appendChild(el('td',null,n.channel));
+      row.appendChild(el('td',null,n.to));
+      var st=el('td');st.appendChild(el('span','sev '+(n.ok?'warning':'critical'),n.ok?'sent':'failed'));st.querySelector('.sev').style.background=n.ok?'var(--ok-bg)':'var(--crit-bg)';st.querySelector('.sev').style.color=n.ok?'var(--ok)':'var(--crit)';row.appendChild(st);
+      row.appendChild(el('td',null,n.note||n.error||'—'));
+      lb.appendChild(row);
+    });
+  }
+  function editRule(sev,r){
+    var email=confirm('Send EMAIL for '+sev+' alerts? OK=yes Cancel=no');
+    var sms=confirm('Send SMS for '+sev+' alerts? OK=yes Cancel=no');
+    var emails=prompt('Email recipients for '+sev+' (comma separated):',csv(r.emails));if(emails===null)return;
+    var phones=prompt('Phone recipients for '+sev+' (comma separated):',csv(r.phones));if(phones===null)return;
+    var esc=prompt('Escalate to tier (L1/L2/L3/L4, blank=none):',r.escalate_to||'');
+    var after=prompt('Escalate after minutes (0=no escalation):',r.escalate_after_min||0);
+    var ch=[];if(email)ch.push('email');if(sms)ch.push('sms');
+    var patch={rules:{}};patch.rules[sev]={channels:ch,emails:arr(emails),phones:arr(phones),escalate_to:esc||'',escalate_after_min:+after||0};
+    adminCallNotify(patch);
+  }
+  function editTier(k,t){
+    var name=prompt('Name for tier '+k+':',t.name||'');if(name===null)return;
+    var emails=prompt('Tier '+k+' emails (comma separated):',csv(t.emails));if(emails===null)return;
+    var phones=prompt('Tier '+k+' phones (comma separated):',csv(t.phones));if(phones===null)return;
+    var patch={escalation_tiers:{}};patch.escalation_tiers[k]={name:name,emails:arr(emails),phones:arr(phones)};
+    adminCallNotify(patch);
+  }
+  async function adminCallNotify(patch){try{await api('/alert-config',{method:'PUT',body:JSON.stringify(patch)});renderNotify();}catch(e){alert(e.message);}}
+  async function saveTemplates(){
+    var patch={templates:{sms:$('#tplSms').value,email_subject:$('#tplSub').value,email_body:$('#tplBody').value}};
+    try{await api('/alert-config',{method:'PUT',body:JSON.stringify(patch)});$('#tplSave').textContent='Saved ✓';setTimeout(function(){$('#tplSave').textContent='Save templates';},1500);}catch(e){alert(e.message);}
+  }
+  async function sendTestNotif(){
+    var to=$('#testTo').value.trim();if(!to){alert('Enter a recipient');return;}
+    try{var r=await api('/alert-config/test',{method:'POST',body:JSON.stringify({channel:$('#testCh').value,to:to})});
+      $('#testNote').textContent=r.ok?('Test '+r.channel+' '+(r.note?('('+r.note+')'):'sent')+' to '+to):('Failed: '+(r.error||''));renderNotify();}
+    catch(e){$('#testNote').textContent='Error: '+e.message;}
+  }
+  async function saveReportSchedule(){
+    var emails=$('#rpEmails').value.split(',').map(function(x){return x.trim();}).filter(Boolean);
+    var patch={report:{enabled:$('#rpEnabled').value==='yes',hour:+$('#rpHour').value||7,emails:emails,base_url:$('#rpBase').value.trim().replace(/\/$/,'')}};
+    try{await api('/alert-config',{method:'PUT',body:JSON.stringify(patch)});$('#rpSave').textContent='Saved ✓';setTimeout(function(){$('#rpSave').textContent='Save schedule';},1500);}
+    catch(e){alert(e.message);}
+  }
+  async function sendReportNow(){
+    try{var r=await api('/report-email/test',{method:'POST',body:'{}'});$('#rpNote').textContent='Report emailed to '+r.sent+' recipient(s). Check Delivery Log below.';renderNotify();}
+    catch(e){$('#rpNote').textContent='Error: '+e.message;}
+  }
+
+  var REPORT_TYPES=[['readings','Live Readings'],['alarms','Alarm Report'],['sensor-health','Sensor Health'],['coach-health','Coach Health'],['emu-health','EMU Health']];
+  function scoreClass(v){return v>=80?'ok':v>=55?'warn':'crit';}
+  async function renderReports(){
+    $('#reportNote').textContent='Exports use your live session and cover only your assigned coaches.';
+    var hi=await api('/health-index');
+    var top=$('#reportHealth');top.innerHTML='';
+    [['Fleet Health',hi.fleet,scoreClass(hi.fleet),''],['EMUs',hi.emus.length,'',''],['Coaches',hi.coaches.length,'',''],['Sensors',hi.sensors.length,'','']].forEach(function(c){
+      var d=el('div','kpi '+(c[2]||''));d.appendChild(el('div','label',c[0]));var v=el('div','val'+(c[3]?' unit':''),c[1]);if(c[3])v.dataset.unit=c[3];d.appendChild(v);top.appendChild(d);});
+    var tb=$('#reportRows');tb.innerHTML='';
+    REPORT_TYPES.forEach(function(rt){
+      var tr=el('tr');tr.appendChild(el('td',null,rt[1]));
+      var e=el('td');var xb=el('button','mini','⬇ Excel');xb.addEventListener('click',function(){download('/report/'+rt[0]+'/xlsx','raip_'+rt[0]+'.xlsx').catch(function(err){alert(err.message);});});e.appendChild(xb);tr.appendChild(e);
+      var p=el('td');var pb=el('button','mini','🖨 PDF');pb.addEventListener('click',function(){printReport(rt[0]);});p.appendChild(pb);tr.appendChild(p);
+      tb.appendChild(tr);
+    });
+    // historical report coach dropdown (from all coaches in scope)
+    var emus=await api('/emus');var coaches=[];emus.forEach(function(e){e.coaches.forEach(function(c){coaches.push(c.coach_id);});});
+    var sel=$('#histCoach');var keep=sel.value;var dl=$('#histCoachDL');dl.innerHTML='';
+    coaches.sort().forEach(function(cid){var o=el('option',null,null);o.value=cid;dl.appendChild(o);});
+    if(keep)sel.value=keep;
+    if(!$('#histTo').value){var t=new Date();$('#histTo').value=t.toISOString().slice(0,10);var w=new Date(Date.now()-7*864e5);$('#histFrom').value=w.toISOString().slice(0,10);}
+  }
+  function histUrl(kind){
+    var c=$('#histCoach').value;if(!c){alert('Select a coach');return null;}
+    return '/report/history/'+kind+'?coach='+encodeURIComponent(c)+'&from='+$('#histFrom').value+'&to='+$('#histTo').value;
+  }
+  async function download(path,name){
+    var r=await fetch('/api/v1'+path,{headers:{Authorization:'Bearer '+TOKEN}});
+    if(!r.ok){throw new Error('Download failed ('+r.status+')');}
+    var blob=await r.blob();var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  }
+  async function printReport(type){
+    try{var r=await fetch('/api/v1/report/'+type+'/print',{headers:{Authorization:'Bearer '+TOKEN}});
+      var html=await r.text();var w=window.open('','_blank');w.document.open();w.document.write(html);w.document.close();}
+    catch(e){alert(e.message);}
+  }
+  $('#csvBtn').addEventListener('click',function(){download('/export/readings.csv','raip_readings.csv').catch(function(e){alert(e.message);});});
+  $('#histXlsx').addEventListener('click',function(){var u=histUrl('xlsx');if(!u)return;download(u,'history_'+$('#histCoach').value+'.xlsx').catch(function(e){alert(e.message);});});
+  $('#histPrint').addEventListener('click',function(){var u=histUrl('print');if(!u)return;printPath(u);});
+  async function printPath(path){
+    try{var r=await fetch('/api/v1'+path,{headers:{Authorization:'Bearer '+TOKEN}});
+      if(!r.ok){var j=await r.json().catch(function(){return{};});throw new Error(j.error||('HTTP '+r.status));}
+      var html=await r.text();var w=window.open('','_blank');w.document.open();w.document.write(html);w.document.close();}
+    catch(e){alert(e.message);}
+  }
+
+  // ---- Fleet Assistant (rule-based, answers from live data) ----
+  var ASST_BOUND=false;
+  function renderAssistant(){
+    if(!ASST_BOUND){
+      var chips=$('#asstChips');var qs=['Which coaches are critical?','Show offline coaches','Hottest TM','Lowest battery','Active alerts','Fleet summary','Help'];
+      chips.innerHTML='';
+      qs.forEach(function(q){var b=el('button','mini',q);b.addEventListener('click',function(){$('#asstInput').value=q;askAssistant(q);});chips.appendChild(b);});
+      $('#asstAsk').addEventListener('click',function(){askAssistant($('#asstInput').value);});
+      $('#asstInput').addEventListener('keydown',function(e){if(e.key==='Enter')askAssistant($('#asstInput').value);});
+      ASST_BOUND=true;
+    }
+  }
+  async function askAssistant(query){
+    var q=(query||'').toLowerCase().trim();var out=$('#asstOut');
+    out.innerHTML='<div class="desc">Thinking…</div>';
+    try{
+      var ai=await api('/assistant/ask',{method:'POST',body:JSON.stringify({question:query||''})});
+      if(ai&&ai.mode==='ai'&&ai.answer){ out.innerHTML='<div style="white-space:pre-wrap">'+ai.answer.replace(/</g,'&lt;')+'</div><div class="desc" style="margin-top:10px">— AI Copilot</div>'; return; }
+    }catch(e){}
+    try{
+      var emus=await api('/emus');
+      var tms=[];emus.forEach(function(e){(e.coaches||[]).forEach(function(c){(c.tms||[]).forEach(function(t){tms.push({coach:c.coach_id,emu:e.emu_id,tm:t.tm_id||t.sensor_id,temp:t.temperature,cls:t.classification,status:t.status,batt:t.battery_health});});});});
+      var online=tms.filter(function(t){return t.status!=='offline';});
+      function list(rows,cols){ if(!rows.length)return '<div class="desc">None found. 👍</div>';
+        var h='<table style="width:100%"><thead><tr>'+cols.map(function(c){return '<th>'+c[0]+'</th>';}).join('')+'</tr></thead><tbody>';
+        h+=rows.map(function(r){return '<tr>'+cols.map(function(c){return '<td>'+(r[c[1]]==null?'—':r[c[1]])+'</td>';}).join('')+'</tr>';}).join('');
+        return h+'</tbody></table>'; }
+      var ans='';
+      if(!q||q==='help'){
+        ans='<b>I can answer (from live fleet data):</b><br><br>'+
+          '• <b>critical / high / warning</b> — TMs at that alert level<br>'+
+          '• <b>offline</b> — coaches/TMs not reporting<br>'+
+          '• <b>hottest / coolest</b> — highest / lowest temperature TM<br>'+
+          '• <b>battery</b> — lowest-battery sensors<br>'+
+          '• <b>alerts</b> — active alerts<br>'+
+          '• <b>summary</b> — fleet overview<br><br>'+
+          '<span class="desc">Note: rule-based assistant over your own data — not an external AI service.</span>';
+      } else if(q.indexOf('summary')>=0||q.indexOf('overview')>=0){
+        var ov=await api('/overview');
+        ans='<b>Fleet summary</b><br><br>EMUs: '+ov.total_emus+' · Coaches: '+ov.total_coaches+' · TMs: '+ov.total_tms+
+          '<br>Online: '+ov.online_sensors+' · Offline: '+ov.offline_sensors+
+          '<br>Warning: '+ov.warning_tms+' · Critical: '+ov.critical_tms+
+          '<br>Active alerts: '+ov.active_alerts+' · Avg fleet temp: '+(ov.avg_fleet_temp==null?'—':ov.avg_fleet_temp+'°C');
+      } else if(q.indexOf('critical')>=0){
+        ans='<b>Critical TMs</b><br>'+list(online.filter(function(t){return t.cls==='critical';}),[['TM','tm'],['Coach','coach'],['Temp °C','temp']]);
+      } else if(q.indexOf('high')>=0){
+        ans='<b>High TMs</b><br>'+list(online.filter(function(t){return t.cls==='high';}),[['TM','tm'],['Coach','coach'],['Temp °C','temp']]);
+      } else if(q.indexOf('warning')>=0){
+        ans='<b>Warning TMs</b><br>'+list(online.filter(function(t){return t.cls==='warning';}),[['TM','tm'],['Coach','coach'],['Temp °C','temp']]);
+      } else if(q.indexOf('offline')>=0){
+        ans='<b>Offline TMs</b><br>'+list(tms.filter(function(t){return t.status==='offline';}),[['TM','tm'],['Coach','coach'],['EMU','emu']]);
+      } else if(q.indexOf('hot')>=0||q.indexOf('highest')>=0||q.indexOf('max')>=0){
+        var s=online.slice().sort(function(a,b){return (b.temp||0)-(a.temp||0);}).slice(0,5);
+        ans='<b>Hottest TMs</b><br>'+list(s,[['TM','tm'],['Coach','coach'],['Temp °C','temp'],['Level','cls']]);
+      } else if(q.indexOf('cool')>=0||q.indexOf('lowest temp')>=0){
+        var sc=online.slice().sort(function(a,b){return (a.temp||0)-(b.temp||0);}).slice(0,5);
+        ans='<b>Coolest TMs</b><br>'+list(sc,[['TM','tm'],['Coach','coach'],['Temp °C','temp']]);
+      } else if(q.indexOf('batt')>=0){
+        var sb=online.filter(function(t){return t.batt!=null;}).sort(function(a,b){return a.batt-b.batt;}).slice(0,5);
+        ans='<b>Lowest battery</b><br>'+list(sb,[['TM','tm'],['Coach','coach'],['Battery %','batt']]);
+      } else if(q.indexOf('alert')>=0){
+        var al=await api('/alerts?state=active');
+        ans='<b>Active alerts: '+al.length+'</b><br>'+list(al.slice(0,20).map(function(a){return {sev:a.severity,asset:a.coach_id||a.sensor_id,detail:a.message};}),[['Severity','sev'],['Asset','asset'],['Detail','detail']]);
+      } else {
+        ans='<div class="desc">Didn\'t catch that. Try: <b>critical</b>, <b>offline</b>, <b>hottest</b>, <b>battery</b>, <b>alerts</b>, <b>summary</b> — or type <b>help</b>.</div>';
+      }
+      out.innerHTML=ans;
+    }catch(e){out.innerHTML='<div class="desc">Error: '+e.message+'</div>';}
+  }
+
+  async function renderHealth(){
+    var hi=await api('/health-index');
+    var top=$('#healthTop');top.innerHTML='';
+    var worstCoach=hi.coaches[0];
+    [['Fleet Health',hi.fleet,scoreClass(hi.fleet),''],['Healthy Coaches',hi.coaches.filter(function(c){return c.score>=80;}).length,'ok',''],
+     ['At-Risk Coaches',hi.coaches.filter(function(c){return c.score<55;}).length,hi.coaches.filter(function(c){return c.score<55;}).length?'crit':'',''],
+     ['Lowest Coach',worstCoach?worstCoach.score:100,worstCoach?scoreClass(worstCoach.score):'ok','']].forEach(function(c){
+      var d=el('div','kpi '+(c[2]||''));d.appendChild(el('div','label',c[0]));d.appendChild(el('div','val',c[1]));top.appendChild(d);});
+    var tc=$('#coachHealthRows');tc.innerHTML='';
+    hi.coaches.forEach(function(c){
+      var tr=el('tr');[c.coach_id,c.emu_id||'—',c.count,c.avg_temp==null?'—':c.avg_temp+'°',c.worst].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var sc=el('td');var sp=el('span','sev '+(c.score>=80?'warning':c.score>=55?'high':'critical'),String(c.score));
+      sp.style.background='var(--'+(c.score>=80?'ok':c.score>=55?'high':'crit')+'-bg)';sp.style.color='var(--'+(c.score>=80?'ok':c.score>=55?'high':'crit')+')';sc.appendChild(sp);tr.appendChild(sc);
+      tc.appendChild(tr);
+    });
+    var te=$('#emuHealthRows');te.innerHTML='';
+    hi.emus.forEach(function(e){
+      var tr=el('tr');[e.emu_id,e.coaches,e.count,e.avg_temp==null?'—':e.avg_temp+'°'].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var sc=el('td');var sp=el('span','sev '+(e.score>=80?'warning':e.score>=55?'high':'critical'),String(e.score));
+      sp.style.background='var(--'+(e.score>=80?'ok':e.score>=55?'high':'crit')+'-bg)';sp.style.color='var(--'+(e.score>=80?'ok':e.score>=55?'high':'crit')+')';sc.appendChild(sp);tr.appendChild(sc);
+      te.appendChild(tr);
+    });
+  }
+
+  async function renderAudit(){
+    var a=await api('/audit');var tb=$('#auditRows');tb.innerHTML='';
+    $('#auditEmpty').style.display=a.length?'none':'block';
+    a.forEach(function(r){var tr=el('tr');[new Date(r.at).toLocaleString('en-GB'),r.user,r.action,r.detail||'—'].forEach(function(v){tr.appendChild(el('td',null,v));});tb.appendChild(tr);});
+  }
+
+  function openTrend(sensorId){CMP=[sensorId];switchView('analytics');}
+})();
+</script>
+</body>
+</html>

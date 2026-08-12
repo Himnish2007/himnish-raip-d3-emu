@@ -1,0 +1,26 @@
+{
+  "name": "himnish-raip-d3-emu",
+  "version": "1.0.0",
+  "description": "EMU Motor Coach TM Temperature Monitoring System (wireless/wired/hybrid sensors, configurable SMS+Email alerting, Railway cloud)",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "DEMO_MODE=true node server.js",
+    "seed": "node scripts/demo_push.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mqtt": "^5.15.1",
+    "nodemailer": "^6.9.14",
+    "pg": "^8.22.0"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
