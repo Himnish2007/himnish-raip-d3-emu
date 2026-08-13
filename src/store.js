@@ -555,6 +555,11 @@ class Store {
       lte_imei: body.lte_imei || null, lte_sim: body.lte_sim || null, lte_ip: body.lte_ip || null,
       rut200_ip: body.rut200_ip || null, rut200_port: body.rut200_port || 80,
       rut200_path: body.rut200_path || '/readings', poll_enabled: !!body.poll_enabled,
+      // Per-channel calibration offset in °C, added to the raw sensor reading
+      // before it is classified/stored/displayed. e.g. gun reads 50°C but the
+      // sensor reports 46°C -> set tm1_offset = 4.
+      cal_tm1: Number(body.cal_tm1) || 0, cal_tm2: Number(body.cal_tm2) || 0,
+      cal_tm3: Number(body.cal_tm3) || 0, cal_tm4: Number(body.cal_tm4) || 0,
     });
     if (body.emu_id) this.assignCoach({ coach_id: body.coach_id, emu_id: body.emu_id, position: body.position, user: actor, reason: 'created' });
     this.logAudit({ user: actor, action: 'create_coach', detail: body.coach_id });
@@ -566,6 +571,7 @@ class Store {
     ['name', 'rut200_ip', 'rut200_path', 'architecture', 'data_source', 'oem', 'installation_date', 'concentrator_id', 'lte_imei', 'lte_sim', 'lte_ip'].forEach((k) => { if (patch[k] !== undefined) c[k] = patch[k]; });
     if (patch.rut200_port !== undefined) c.rut200_port = Number(patch.rut200_port) || 80;
     if (patch.poll_enabled !== undefined) c.poll_enabled = !!patch.poll_enabled;
+    ['cal_tm1', 'cal_tm2', 'cal_tm3', 'cal_tm4'].forEach((k) => { if (patch[k] !== undefined) c[k] = Number(patch[k]) || 0; });
     this.logAudit({ user: actor, action: 'update_coach', detail: coach_id });
     this._persist(); return c;
   }
@@ -699,10 +705,17 @@ class Store {
         user: 'auto-provision', reason: 'first contact' });
     }
 
-    const temperature = Number(r.temperature);
+    const rawTemperature = Number(r.temperature);
+    let temperature = Number.isFinite(rawTemperature) ? rawTemperature : null;
+    if (temperature != null && r.coach_id && r.tm_id) {
+      const coach = this.coaches.get(r.coach_id);
+      const calKey = 'cal_' + String(r.tm_id).toLowerCase(); // e.g. tm_id "TM1" -> cal_tm1
+      const offset = coach && Number.isFinite(coach[calKey]) ? coach[calKey] : 0;
+      if (offset) temperature = Math.round((temperature + offset) * 10) / 10;
+    }
     const meta = {
       sensor_id: r.sensor_id, tm_id: r.tm_id || null, coach_id: r.coach_id || null, emu_id: resolvedEmu,
-      temperature: Number.isFinite(temperature) ? temperature : null,
+      temperature,
       battery_health: r.battery_health != null ? Number(r.battery_health) : null,
       signal_strength: r.signal_strength != null ? Number(r.signal_strength) : null,
       sensor_type: r.sensor_type || 'wireless', status: 'online', last_update: eventTime,

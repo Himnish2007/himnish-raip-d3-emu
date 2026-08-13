@@ -656,6 +656,7 @@
       document.querySelector('.nav button[data-view="assets"]').style.display=canAdmin?'':'none';
       document.querySelector('.nav button[data-view="notify"]').style.display=canAdmin?'':'none';
       document.querySelector('.nav button[data-view="audit"]').style.display=canAdmin?'':'none';
+      document.querySelector('.nav button[data-view="topology"]').style.display=(USER.role==='super_admin')?'':'none';
       bindAdminOnce();
       fetch('/healthz').then(function(r){return r.json();}).then(function(h){$('#demoBadge').style.display=h.demo?'':'none';}).catch(function(){});
       startClock();switchView('overview');startPolling();startIdleTimer();
@@ -701,6 +702,7 @@
 
   $('#nav').addEventListener('click',function(e){var b=e.target.closest('button[data-view]');if(b)switchView(b.dataset.view);});
   function switchView(v){
+    if(v==='topology'&&(!USER||USER.role!=='super_admin'))v='overview'; // Topology is Super Admin only
     CURRENT=v;
     document.querySelectorAll('.nav button[data-view]').forEach(function(b){b.classList.toggle('active',b.dataset.view===v);});
     document.querySelectorAll('.view').forEach(function(s){s.classList.toggle('active',s.id==='view-'+v);});
@@ -1267,7 +1269,7 @@
     assets.coaches.forEach(function(c){
       var tr=el('tr');[c.coach_id,c.emu_id||'—',c.position||'—',(c.architecture||'wireless'),c.rut200_ip||'—',c.rut200_port||'—',c.rut200_path||'—',c.poll_enabled?'on':'off'].forEach(function(v){tr.appendChild(el('td',null,v));});
       var ac=el('td');
-      if(!ro){ac.appendChild(mkBtn('Edit',function(){editCoach(c);}));ac.appendChild(mkBtn('Delete',function(){delCoach(c);}));}else ac.textContent='—';
+      if(!ro){ac.appendChild(mkBtn('Edit',function(){editCoach(c);}));ac.appendChild(mkBtn('Calibrate',function(){calibrateCoach(c);}));ac.appendChild(mkBtn('Delete',function(){delCoach(c);}));}else ac.textContent='—';
       tr.appendChild(ac);tc.appendChild(tr);
     });
     // sensor registry
@@ -1412,7 +1414,22 @@
     var ip=prompt('RUT200 IP address (optional):','');
     var port=prompt('RUT200 port:','80');var path=prompt('RUT200 data path:','/readings');
     var poll=confirm('Enable polling this RUT200 by IP? OK = yes, Cancel = no');
-    adminCall('/coach','POST',{coach_id:id,emu_id:emu||undefined,position:pos||undefined,architecture:arch||'wireless',rut200_ip:ip||null,rut200_port:port,rut200_path:path,poll_enabled:poll});
+    var doCal=confirm('Set temperature calibration offsets now for TM1–TM4? (e.g. gun reads 50°C but sensor shows 46°C → offset +4)\nOK = yes, Cancel = skip (can calibrate later from the coach list)');
+    var c1=0,c2=0,c3=0,c4=0;
+    if(doCal){
+      c1=+prompt('TM1 calibration offset (°C, + or -):','0')||0;
+      c2=+prompt('TM2 calibration offset (°C, + or -):','0')||0;
+      c3=+prompt('TM3 calibration offset (°C, + or -):','0')||0;
+      c4=+prompt('TM4 calibration offset (°C, + or -):','0')||0;
+    }
+    adminCall('/coach','POST',{coach_id:id,emu_id:emu||undefined,position:pos||undefined,architecture:arch||'wireless',rut200_ip:ip||null,rut200_port:port,rut200_path:path,poll_enabled:poll,cal_tm1:c1,cal_tm2:c2,cal_tm3:c3,cal_tm4:c4});
+  }
+  function calibrateCoach(c){
+    var c1=prompt('TM1 calibration offset (°C, + or -) — current value shown, edit as needed:',c.cal_tm1||0);if(c1===null)return;
+    var c2=prompt('TM2 calibration offset (°C, + or -):',c.cal_tm2||0);if(c2===null)return;
+    var c3=prompt('TM3 calibration offset (°C, + or -):',c.cal_tm3||0);if(c3===null)return;
+    var c4=prompt('TM4 calibration offset (°C, + or -):',c.cal_tm4||0);if(c4===null)return;
+    adminCall('/coach/'+encodeURIComponent(c.coach_id),'PUT',{cal_tm1:+c1||0,cal_tm2:+c2||0,cal_tm3:+c3||0,cal_tm4:+c4||0});
   }
   function editCoach(c){
     var name=prompt('Name for '+c.coach_id+':',c.name||'');if(name===null)return;
