@@ -571,7 +571,32 @@ class Store {
     ['name', 'rut200_ip', 'rut200_path', 'architecture', 'data_source', 'oem', 'installation_date', 'concentrator_id', 'lte_imei', 'lte_sim', 'lte_ip'].forEach((k) => { if (patch[k] !== undefined) c[k] = patch[k]; });
     if (patch.rut200_port !== undefined) c.rut200_port = Number(patch.rut200_port) || 80;
     if (patch.poll_enabled !== undefined) c.poll_enabled = !!patch.poll_enabled;
-    ['cal_tm1', 'cal_tm2', 'cal_tm3', 'cal_tm4'].forEach((k) => { if (patch[k] !== undefined) c[k] = Number(patch[k]) || 0; });
+
+    // Per-channel calibration: compute the delta (new - old) BEFORE overwriting,
+    // then instantly nudge the already-cached live reading (and its most recent
+    // series point) by that same delta. This makes the dashboard reflect a
+    // calibration change immediately, instead of waiting for the next reading
+    // to arrive (which can be minutes away at low Log intervals).
+    const calDeltas = {};
+    ['cal_tm1', 'cal_tm2', 'cal_tm3', 'cal_tm4'].forEach((k) => {
+      if (patch[k] === undefined) return;
+      const newVal = Number(patch[k]) || 0;
+      const oldVal = Number(c[k]) || 0;
+      const delta = Math.round((newVal - oldVal) * 10) / 10;
+      if (delta) calDeltas[k] = delta;
+      c[k] = newVal;
+    });
+    if (Object.keys(calDeltas).length) {
+      for (const s of this.sensors.values()) {
+        if (s.coach_id !== coach_id || s.temperature == null || !s.tm_id) continue;
+        const delta = calDeltas['cal_' + String(s.tm_id).toLowerCase()];
+        if (!delta) continue;
+        s.temperature = Math.round((s.temperature + delta) * 10) / 10;
+        const buf = this.series.get(s.sensor_id);
+        if (buf && buf.length) buf[buf.length - 1].temperature = s.temperature;
+      }
+    }
+
     this.logAudit({ user: actor, action: 'update_coach', detail: coach_id });
     this._persist(); return c;
   }
