@@ -351,7 +351,10 @@
     <section class="view" id="view-assets">
       <div class="view-head"><h2>Administration</h2><span class="desc" id="adminScopeNote"></span></div>
 
-      <div class="view-head"><h2 style="font-size:14px">Alert Thresholds</h2><span class="desc">Admin-editable · applies fleet-wide immediately · Log interval controls the RUT200 IP-pull poller (takes effect live, no restart) — per-device push interval is set separately in Field Devices</span></div>
+      <div class="view-head"><h2 style="font-size:14px">Alert Thresholds</h2><span class="desc">Admin-editable · applies fleet-wide immediately · Log interval is the ONLY control for how often every push-mode field device logs data — takes effect on each device's next 5-min config refresh, no restart needed. A per-device override still exists in Field Devices for rare exceptions.</span></div>
+      <div style="background:var(--warn-bg);border:1px solid var(--warn);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--text)">
+        ⚠️ If a device is still logging at a rate that doesn't match this value, check its row in <b>Field Devices</b> — if "Interval" shows an override (not "global"), remove the override so it follows Log interval.
+      </div>
       <div class="panel" style="padding:16px;margin-bottom:18px">
         <div class="row" id="thRow">
           <div class="f"><label>Warning &gt; °C</label><input class="inp" id="thWarn" type="number" style="width:110px"></div>
@@ -1145,7 +1148,7 @@
       var tr=el('tr');tr.appendChild(el('td',null,'#'+a.id));
       var s=el('td');s.appendChild(el('span','sev '+a.severity,a.severity.replace('_',' ')));tr.appendChild(s);
       tr.appendChild(el('td',null,(a.emu_id||'—')+' / '+(a.coach_id||'—')));tr.appendChild(el('td',null,a.message));
-      tr.appendChild(el('td',null,new Date(a.at).toLocaleTimeString('en-GB')));
+      tr.appendChild(el('td',null,new Date(a.at).toLocaleString('en-GB')));
       var st=el('td');st.appendChild(el('span','state '+a.state,a.state));tr.appendChild(st);
       var ac=el('td');
       if(a.state==='active'&&canAck){var btn=el('button','mini','Acknowledge');btn.addEventListener('click',async function(){try{await api('/alerts/'+a.id+'/ack',{method:'POST'});renderAlerts();updateBadge();}catch(err){alert(err.message);}});ac.appendChild(btn);}
