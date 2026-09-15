@@ -1034,7 +1034,7 @@
     if(!window.L){$('#mapNote').textContent='Map library still loading — check your internet connection and retry.';return;}
     if(!MAP){
       MAP=L.map('map').setView([22.0,79.0],5);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:18}).addTo(MAP);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{attribution:'© OpenStreetMap contributors © <a href="https://carto.com/attributions">CARTO</a>',maxZoom:19,subdomains:'abcd'}).addTo(MAP);
     }
     MAP_MARKERS.forEach(function(m){MAP.removeLayer(m);});MAP_MARKERS=[];
     withGeo.forEach(function(d){
