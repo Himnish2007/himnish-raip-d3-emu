@@ -8,6 +8,14 @@ const ExcelJS = require('exceljs');
 // exports their assigned coaches (tender: export per assigned asset).
 // ---------------------------------------------------------------------------
 
+// The server runs in UTC (Etc/UTC), but reports are read by India-based rail
+// staff — always render report timestamps in IST regardless of the host's
+// own system timezone, so they match what the reader expects.
+function ist(d) {
+  return (d instanceof Date ? d : new Date(d))
+    .toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' });
+}
+
 const TYPES = {
   readings: 'Live Readings Report',
   alarms: 'Alarm Report',
@@ -102,7 +110,7 @@ async function toXlsx(type, store, sensors, scope) {
   ws.mergeCells('A1', 'E1');
   ws.getCell('A1').value = 'EMU Motor Coach TM Temperature Monitoring System';
   ws.getCell('A1').font = { bold: true, size: 14 };
-  ws.getCell('A2').value = (TYPES[type] || 'Report') + ' — generated ' + new Date().toLocaleString('en-GB');
+  ws.getCell('A2').value = (TYPES[type] || 'Report') + ' — generated ' + ist(new Date());
   ws.getCell('A2').font = { italic: true, size: 10 };
   const { head, body } = rowsFor(type, store, sensors, scope);
   const headerRow = ws.addRow([]);
@@ -126,7 +134,7 @@ th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#0e749
 tr:nth-child(even) td{background:#f4f7fa}.foot{margin-top:16px;font-size:11px;color:#777}
 @media print{.noprint{display:none}}</style></head><body>
 <h1>EMU Motor Coach TM Temperature Monitoring System</h1>
-<div class="sub">${esc(title)} · generated ${new Date().toLocaleString('en-GB')} · ${body.length} rows</div>
+<div class="sub">${esc(title)} · generated ${ist(new Date())} · ${body.length} rows</div>
 <button class="noprint" onclick="window.print()" style="margin-bottom:12px;padding:8px 14px;background:#0e7490;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save as PDF</button>
 <table><thead><tr>${head.map((h) => '<th>' + esc(h) + '</th>').join('')}</tr></thead><tbody>${rows}</tbody></table>
 <div class="foot">HIMNISH LIMITED · Confidential · Railway asset monitoring report</div>
@@ -165,8 +173,8 @@ async function toHistoryXlsx(coach, from, to, rows) {
   const info = wb.addWorksheet('Summary');
   info.getCell('A1').value = 'EMU Motor Coach TM — Historical Report';
   info.getCell('A1').font = { bold: true, size: 14 };
-  info.getCell('A2').value = `Coach: ${coach}    Period: ${from.toLocaleString('en-GB')} → ${to.toLocaleString('en-GB')}`;
-  info.getCell('A3').value = `Samples: ${table.length}    Generated: ${new Date().toLocaleString('en-GB')}`;
+  info.getCell('A2').value = `Coach: ${coach}    Period: ${ist(from)} → ${ist(to)}`;
+  info.getCell('A3').value = `Samples: ${table.length}    Generated: ${ist(new Date())}`;
   info.addRow([]);
   const sh = info.addRow(['Traction Motor', 'Samples', 'Min °C', 'Max °C', 'Avg °C']);
   sh.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -179,7 +187,7 @@ async function toHistoryXlsx(coach, from, to, rows) {
   const hr = ws.addRow(head);
   hr.font = { bold: true, color: { argb: 'FFFFFFFF' } };
   hr.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0E7490' } }; });
-  table.forEach((r) => ws.addRow([new Date(r.ts).toLocaleString('en-GB'), ...r.values.map((v) => (v == null ? '' : v))]));
+  table.forEach((r) => ws.addRow([ist(r.ts), ...r.values.map((v) => (v == null ? '' : v))]));
   ws.columns.forEach((col) => { col.width = 20; });
   return wb.xlsx.writeBuffer();
 }
@@ -187,14 +195,14 @@ async function toHistoryXlsx(coach, from, to, rows) {
 function toHistoryHtml(coach, from, to, rows) {
   const { tmCols, table, summary } = buildHistory(rows);
   const sumRows = summary.map((s) => `<tr><td>${esc(s.tm)}</td><td>${s.samples}</td><td>${s.min == null ? '—' : s.min}</td><td>${s.max == null ? '—' : s.max}</td><td>${s.avg == null ? '—' : s.avg}</td></tr>`).join('');
-  const dataRows = table.map((r) => `<tr><td>${esc(new Date(r.ts).toLocaleString('en-GB'))}</td>${r.values.map((v) => '<td>' + (v == null ? '—' : esc(v)) + '</td>').join('')}</tr>`).join('');
+  const dataRows = table.map((r) => `<tr><td>${esc(ist(r.ts))}</td>${r.values.map((v) => '<td>' + (v == null ? '—' : esc(v)) + '</td>').join('')}</tr>`).join('');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Historical Report ${esc(coach)}</title>
 <style>body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0}
 .sub{color:#555;font-size:12px;margin:4px 0 16px}table{border-collapse:collapse;width:100%;font-size:12px;margin-bottom:20px}
 th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#0e7490;color:#fff}
 tr:nth-child(even) td{background:#f4f7fa}@media print{.noprint{display:none}}</style></head><body>
 <h1>EMU Motor Coach TM — Historical Report</h1>
-<div class="sub">Coach <b>${esc(coach)}</b> · ${esc(from.toLocaleString('en-GB'))} → ${esc(to.toLocaleString('en-GB'))} · ${table.length} samples · generated ${new Date().toLocaleString('en-GB')}</div>
+<div class="sub">Coach <b>${esc(coach)}</b> · ${esc(ist(from))} → ${esc(ist(to))} · ${table.length} samples · generated ${ist(new Date())}</div>
 <button class="noprint" onclick="window.print()" style="margin-bottom:12px;padding:8px 14px;background:#0e7490;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save as PDF</button>
 <h3>Summary</h3><table><thead><tr><th>Traction Motor</th><th>Samples</th><th>Min °C</th><th>Max °C</th><th>Avg °C</th></tr></thead><tbody>${sumRows}</tbody></table>
 <h3>Readings</h3><table><thead><tr><th>Timestamp</th>${tmCols.map((c) => '<th>' + esc(c) + '</th>').join('')}</tr></thead><tbody>${dataRows}</tbody></table>
