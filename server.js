@@ -137,6 +137,38 @@ app.post('/api/v1/login', loginLimiter, (req, res) => {
   res.json(result);
 });
 
+// --- Field-device relay (opt-in via RELAY_TARGET env var) ------------------
+// Purpose: some RUT200 field devices are still hardcoded to this app's old
+// URL and cannot be reached to update their BASE without a site visit. When
+// RELAY_TARGET is set, this app transparently forwards ONLY the two hardware
+// endpoints those devices call (device-config pull + reading ingest) to the
+// new backend, so the RUT never needs to change. Everything else (dashboard,
+// login, admin API) keeps running against THIS app's own store, untouched.
+// This block is a no-op unless RELAY_TARGET is explicitly set in the
+// environment — the AWS deployment never sets it, so it never activates there.
+if (config.RELAY_TARGET) {
+  const relayBase = config.RELAY_TARGET.replace(/\/+$/, '');
+  console.log(`[relay] field-device traffic (/api/v1/device-config, /api/v1/ingest) -> ${relayBase}`);
+  app.use(['/api/v1/device-config', '/api/v1/ingest'], async (req, res) => {
+    try {
+      const target = relayBase + req.originalUrl;
+      const upstream = await fetch(target, {
+        method: req.method,
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': req.headers['x-api-key'] || '' },
+        body: (req.method === 'GET' || req.method === 'HEAD') ? undefined : JSON.stringify(req.body || {}),
+      });
+      const text = await upstream.text();
+      res.status(upstream.status);
+      const ct = upstream.headers.get('content-type');
+      if (ct) res.setHeader('Content-Type', ct);
+      res.send(text);
+    } catch (e) {
+      console.error('[relay] forward failed:', e.message);
+      res.status(502).json({ ok: false, error: 'relay upstream unreachable' });
+    }
+  });
+}
+
 app.use('/api/v1', ingestRouter(store));                 // hardware ingest + device-config (not rate-limited)
 app.use('/api/v1', apiLimiter, apiRouter(store, notifier)); // dashboard API (rate-limited)
 

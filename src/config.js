@@ -25,6 +25,10 @@ const config = {
   // Optional PostgreSQL/TimescaleDB archive. When set, every reading is stored
   // durably and history survives restarts. Unset = in-memory + JSON only.
   DATABASE_URL: process.env.DATABASE_URL || '',
+  // Optional: forward field-device traffic (device-config + ingest) to a
+  // different backend. Only set this on a deployment acting as a relay for
+  // devices still pointed at its old URL — leave unset everywhere else.
+  RELAY_TARGET: process.env.RELAY_TARGET || '',
   BACKFILL_HOURS: num('BACKFILL_HOURS', 6),
   // Data retention: purge readings older than N days (0 = keep forever).
   RETENTION_DAYS: num('RETENTION_DAYS', 0),
