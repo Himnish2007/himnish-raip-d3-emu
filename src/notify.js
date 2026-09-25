@@ -32,7 +32,7 @@ function createNotifier() {
     return {
       severity: (alert.severity || '').toUpperCase(), message: alert.message || '',
       coach: alert.coach_id || '', emu: alert.emu_id || '', tm: alert.tm_id || alert.sensor_id || '',
-      temp: alert.value != null ? alert.value : '', time: new Date(alert.at || Date.now()).toLocaleString('en-GB'),
+      temp: alert.value != null ? alert.value : '', time: new Date(alert.at || Date.now()).toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' }) + ' IST',
     };
   }
 
