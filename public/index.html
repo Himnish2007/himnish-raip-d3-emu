@@ -2,7 +2,8 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#006494" />
 <title>EMU Motor Coach TM Temperature Monitoring System</title>
 <link rel="icon" type="image/png" href="/assets/himnish-logo.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -193,6 +194,110 @@
   .hm-cell{border-radius:6px;padding:12px 6px;text-align:center;color:#fff;font-family:var(--mono);font-weight:600;font-size:14px;cursor:pointer}
   .hm-head{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:center;padding-bottom:4px}
   .scalebar{height:12px;border-radius:6px;background:linear-gradient(90deg,#1e6fd0,#16a34a,#d97706,#dc2626);width:240px}
+  /* ================= Mobile / tablet responsive layer ================= */
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  body{-webkit-tap-highlight-color:transparent;padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+  img,svg,canvas,video{max-width:100%}
+  main{min-width:0}
+  /* grid items default to min-content width and pushed Live EMU 36px past the screen even on a 1366px laptop */
+  .coach,.tm,.car,.emu,.bg{min-width:0}
+  #login{overflow-y:auto}
+  .login-card{margin:auto}
+  .nav{-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+  .nav::-webkit-scrollbar{height:6px}
+  .nav::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+  /* touch screens swipe the tab bar, so the scrollbar is hidden there; laptops keep a thin visible one */
+  @media(hover:none),(max-width:720px){
+    .nav{scrollbar-width:none}
+    .nav::-webkit-scrollbar{display:none}
+  }
+
+  @media(max-width:720px){
+    /* --- header: two compact rows instead of one 577px-wide row that made phones zoom the page out --- */
+    .topbar{flex-wrap:wrap;gap:6px 10px;padding:8px 12px;position:static}
+    .topbar>img{height:28px!important}
+    .topbar .title{order:1;flex:1 1 0;min-width:0;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .topbar .tag,.topbar .spacer,#wallBtn{display:none!important}
+    #demoBadge{order:1;padding:1px 6px!important;font-size:10px!important}
+    #logoutBtn{order:2;padding:6px 10px;font-size:12px}
+    .topbar::after{content:"";order:3;flex-basis:100%;height:0}
+    .topbar .who{order:4;font-size:0;flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .topbar .who b,.topbar .who span{font-size:11px}
+    #whoRole::before{content:"\00a0\00b7\00a0"}
+    .topbar .live{order:5;font-size:11px}
+    .topbar .iconbtn{order:6;width:36px;height:36px}
+
+    /* --- tabs stay reachable while scrolling --- */
+    .nav{position:sticky;top:4px;z-index:19;padding:0 6px}
+    .nav button{padding:12px 12px;font-size:13px}
+
+    /* --- content --- */
+    main{padding:12px 12px 28px}
+    .view-head{margin-bottom:12px;gap:4px 10px}
+    .view-head h2{font-size:16px}
+    .view-head .desc{font-size:12px;flex-basis:100%}
+    .kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .kpi{padding:12px}
+    .kpi .label{font-size:10px}
+    .kpi .val{font-size:24px;margin-top:6px}
+    .emu{padding:12px}
+    .emu-head{flex-wrap:wrap}
+
+    /* --- tables scroll sideways inside their card instead of being clipped --- */
+    .panel{overflow-x:auto;-webkit-overflow-scrolling:touch;
+      /* soft edge shadow shows there is more to swipe sideways */
+      background:linear-gradient(to right,var(--panel) 30%,transparent) 0 0/36px 100% no-repeat local,
+                 linear-gradient(to left,var(--panel) 30%,transparent) 100% 0/36px 100% no-repeat local,
+                 radial-gradient(farthest-side at 0 50%,rgba(0,40,70,.22),transparent) 0 0/12px 100% no-repeat scroll,
+                 radial-gradient(farthest-side at 100% 50%,rgba(0,40,70,.22),transparent) 100% 0/12px 100% no-repeat scroll,
+                 var(--panel)}
+    table{font-size:12px}
+    th,td{padding:9px 10px;white-space:nowrap}
+    .mini{padding:7px 10px}
+
+    /* --- forms: 16px stops iOS zooming into a focused field; fields share the row --- */
+    select,input.inp,.field input{font-size:16px}
+    input.inp,select{max-width:100%}
+    .row{gap:10px}
+    .row .f{flex:1 1 calc(50% - 10px);min-width:0}
+    .row .f input:not([type=checkbox]):not([type=radio]),.row .f select{width:100%!important;min-width:0!important}
+    input[type=checkbox],input[type=radio]{width:auto;min-width:0;flex:none}
+    .row>button{flex:1 1 calc(50% - 10px)}
+    .btn.ghost{padding:9px 12px}
+
+    .tms{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .tm .gauge-wrap svg,.bg svg{max-width:100%;height:auto}
+
+    /* --- sensor picker: compact chips in a short scroll box so the chart is not pushed far down the page --- */
+    #sensorChecks{max-height:150px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:2px}
+    #sensorChecks label{padding:3px 6px!important;font-size:11px!important;gap:4px!important}
+
+    /* --- charts / map / heatmap --- */
+    #chart,#chart2{height:260px}
+    #mapWrap{height:calc(100vh - 300px)!important;min-height:300px}
+    .legend{gap:8px 12px}
+    .hm-row{grid-template-columns:76px repeat(4,minmax(0,1fr))}
+    .hm-lbl{font-size:10px;padding-left:0;word-break:break-all}
+    .hm-cell{padding:10px 2px;font-size:12px}
+    .scalebar{width:100%;max-width:240px}
+
+    /* --- login + footer --- */
+    .login-card{padding:22px 18px;width:min(360px,92vw)}
+    .login-card img{height:72px!important}
+    #appFooter{padding:14px 12px!important;justify-content:center;text-align:center}
+    #appFooter .desc{text-align:center!important}
+  }
+  @media(max-width:520px){
+    .consist,.train{grid-template-columns:minmax(0,1fr)}
+  }
+  @media(max-width:380px){
+    .coach{padding:10px}
+    .tm{padding:8px 6px}
+    .tm .chips{gap:3px}
+    .tm .chip .cv{font-size:12px}
+    .kpi .val{font-size:22px}
+    .nav button{padding:12px 10px;font-size:12.5px}
+  }
 </style>
 </head>
 <body>
@@ -206,7 +311,6 @@
     <div class="field"><label>Password</label><input id="p" type="password" autocomplete="current-password" /></div>
     <button class="btn" id="loginBtn">Sign in</button>
     <div class="err" id="loginErr"></div>
-    <div class="hint">Demo logins · <code>admin / himnish@2025</code> · <code>engineer / eng@2025</code> · <code>viewer / view@2025</code></div>
   </div>
 </div>
 
@@ -706,14 +810,30 @@
   function toggleLang(){LANG=(LANG==='en')?'hi':'en';applyLang();$('#langBtn').textContent=(LANG==='en')?'हिं':'EN';}
   function doLogout(){TOKEN=null;USER=null;if(POLL)clearInterval(POLL);$('#app').style.display='none';$('#login').style.display='grid';$('#p').value='';}
 
+  // mouse users: the vertical wheel scrolls the tab bar sideways when all 18 tabs do not fit (small laptops)
+  $('#nav').addEventListener('wheel',function(e){
+    var n=$('#nav');if(n.scrollWidth<=n.clientWidth||Math.abs(e.deltaX)>Math.abs(e.deltaY))return;
+    n.scrollLeft+=e.deltaY;e.preventDefault();
+  },{passive:false});
   $('#nav').addEventListener('click',function(e){var b=e.target.closest('button[data-view]');if(b)switchView(b.dataset.view);});
   function switchView(v){
     if(v==='topology'&&(!USER||USER.role!=='super_admin'))v='overview'; // Topology is Super Admin only
     CURRENT=v;
     document.querySelectorAll('.nav button[data-view]').forEach(function(b){b.classList.toggle('active',b.dataset.view===v);});
     document.querySelectorAll('.view').forEach(function(s){s.classList.toggle('active',s.id==='view-'+v);});
+    // phones: keep the chosen tab visible in the scrolling tab bar and start the new view at the top
+    var ab=document.querySelector('.nav button.active'),nv=$('#nav');
+    if(ab&&nv&&nv.scrollTo)nv.scrollTo({left:ab.offsetLeft-(nv.clientWidth-ab.offsetWidth)/2,behavior:'smooth'});
+    if(window.innerWidth<=720)window.scrollTo(0,0);
     renderView();            // always render the newly opened view
   }
+  // rotation / window resize: re-fit the map and redraw width-dependent charts
+  var LAST_W=window.innerWidth,RS_T=null;
+  window.addEventListener('resize',function(){clearTimeout(RS_T);RS_T=setTimeout(function(){
+    if(window.innerWidth===LAST_W)return;LAST_W=window.innerWidth;
+    try{if(MAP)MAP.invalidateSize();}catch(e){}
+    if(USER&&(CURRENT==='analytics'||CURRENT==='live'||CURRENT==='twin'))renderView();
+  },250);});
   function startClock(){setInterval(function(){$('#clock').textContent=new Date().toLocaleTimeString('en-GB');},1000);}
 
   // Session auto-logout after inactivity (tender security). Warns 1 min before.
@@ -1175,7 +1295,7 @@
   }
   async function drawCompare(){
     var svg=d3.select('#chart2');svg.selectAll('*').remove();$('#cmpLegend').innerHTML='';
-    var box=$('#chart2').getBoundingClientRect();var W=box.width||800,H=340,m={t:16,r:18,b:30,l:42};svg.attr('viewBox','0 0 '+W+' '+H);
+    var box=$('#chart2').getBoundingClientRect();var W=box.width||800,H=box.height||340,m={t:16,r:18,b:30,l:42};svg.attr('viewBox','0 0 '+W+' '+H);
     if(!CMP.length){svg.append('text').attr('x',W/2).attr('y',H/2).attr('fill','#8a96aa').attr('text-anchor','middle').text('Tick one or more sensors to compare');return;}
     var k=await api('/overview');var th=k.thresholds;var seriesList=[];
     for(var i=0;i<CMP.length;i++){var d=await api('/series/'+encodeURIComponent(CMP[i]));seriesList.push({id:CMP[i],pts:d.map(function(p){return{t:new Date(p.t),v:p.temperature};}).filter(function(p){return p.v!=null;})});}
@@ -1183,7 +1303,7 @@
     if(!all.length){svg.append('text').attr('x',W/2).attr('y',H/2).attr('fill','#8a96aa').attr('text-anchor','middle').text('No samples yet');return;}
     var x=d3.scaleTime().domain(d3.extent(all,function(d){return d.t;})).range([m.l,W-m.r]);
     var y=d3.scaleLinear().domain([Math.min(d3.min(all,function(d){return d.v;})-3,20),Math.max(d3.max(all,function(d){return d.v;}),th.crit+5)]).range([H-m.b,m.t]);
-    svg.append('g').attr('class','axis').attr('transform','translate(0,'+(H-m.b)+')').call(d3.axisBottom(x).ticks(6).tickFormat(d3.timeFormat('%H:%M:%S')));
+    svg.append('g').attr('class','axis').attr('transform','translate(0,'+(H-m.b)+')').call(d3.axisBottom(x).ticks(Math.max(2,Math.min(6,Math.floor(W/95)))).tickFormat(d3.timeFormat(W<520?'%H:%M':'%H:%M:%S')));
     svg.append('g').attr('class','axis').attr('transform','translate('+m.l+',0)').call(d3.axisLeft(y).ticks(6));
     [[th.warn,'#d97706'],[th.high,'#ea580c'],[th.crit,'#dc2626']].forEach(function(b){svg.append('line').attr('class','thline').attr('x1',m.l).attr('x2',W-m.r).attr('y1',y(b[0])).attr('y2',y(b[0])).attr('stroke',b[1]);});
     var line=d3.line().x(function(d){return x(d.t);}).y(function(d){return y(d.v);}).curve(d3.curveMonotoneX);
