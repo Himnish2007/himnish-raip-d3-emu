@@ -80,7 +80,11 @@ function createNotifier() {
     const ctx = ctxFor(alert);
     const subject = fill(cfg.templates.email_subject, ctx);
     const body = fill(cfg.templates.email_body, ctx);
-    const sms = fill(cfg.templates.sms, ctx);
+    // Offline alerts have no temperature, so the temperature SMS template would read
+    // "OFFLINE: TM.. on 128298 = C". Use a message-based text instead (still ONE sms per recipient).
+    const sms = alert.severity === 'offline'
+      ? fill(cfg.templates.sms_offline || '[EMU-TM ALERT] {severity}: {message} @ {time}', ctx)
+      : fill(cfg.templates.sms, ctx);
     const channels = rule.channels || [];
 
     // 1) Control-room recipients configured on the rule (see everything).

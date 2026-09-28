@@ -1,4 +1,5 @@
 'use strict';
+require('dotenv').config(); // load .env (DATABASE_URL, JWT_SECRET, SMTP, SMS ...) before config.js reads process.env
 
 const path = require('path');
 const express = require('express');
