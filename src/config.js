@@ -75,6 +75,13 @@ const config = {
   SMS_API_KEY: process.env.SMS_API_KEY || '',
   SMS_SENDER: process.env.SMS_SENDER || 'HMNISH',
   SMS_URL: process.env.SMS_URL || '',
+  // --- India DLT (provider "fast2sms_dlt"): Fast2SMS *message IDs* of the approved DLT templates ---
+  SMS_DLT_TPL_TEMP: process.env.SMS_DLT_TPL_TEMP || '',       // warning / high / critical / rapid-rise (temperature)
+  SMS_DLT_TPL_OFFLINE: process.env.SMS_DLT_TPL_OFFLINE || '', // coach offline
+  SMS_DLT_TPL_BATT: process.env.SMS_DLT_TPL_BATT || '',       // low battery (optional)
+  SMS_API_BASE: process.env.SMS_API_BASE || 'https://www.fast2sms.com', // override only for testing
+  // Do not SMS the same recipient again for the same coach+severity within N minutes (0 = no limit).
+  SMS_REPEAT_MIN: num('SMS_REPEAT_MIN', 30),
 
   // Escalation scan interval (seconds).
   ESCALATION_INTERVAL: num('ESCALATION_INTERVAL', 60),
