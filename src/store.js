@@ -795,13 +795,41 @@ class Store {
   sweepOffline() {
     const t = this.getThresholds();
     const cutoff = Date.now() - t.CFG_OFFLINE_SECONDS * 1000;
+    const wentOffline = new Map(); // coach_id -> sensors that just went offline in this sweep
     for (const s of this.sensors.values()) {
       const wasOnline = s.status === 'online';
       if (Date.parse(s.last_update) < cutoff) {
         s.status = 'offline';
-        if (wasOnline) this._raise({ severity: 'offline', sensor_id: s.sensor_id, coach_id: s.coach_id,
-          emu_id: s.emu_id, tm_id: s.tm_id, message: `Sensor ${s.sensor_id} offline (no data > ${t.CFG_OFFLINE_SECONDS}s)` });
+        if (wasOnline) {
+          const key = s.coach_id || ('sensor:' + s.sensor_id);
+          if (!wentOffline.has(key)) wentOffline.set(key, []);
+          wentOffline.get(key).push(s);
+        }
       }
+    }
+    // ONE offline alert per coach (not one per motor sensor -> no 4 duplicate emails/SMS).
+    for (const list of wentOffline.values()) {
+      const first = list[0];
+      const coachId = first.coach_id;
+      if (coachId) {
+        // straggler guard: a sibling sensor of the same coach crossing the cutoff in the
+        // very next sweep must not raise a second alert for the same outage.
+        const dup = this.alerts.find((x) => x.severity === 'offline' && x.coach_id === coachId &&
+          x.state === 'active' && (Date.now() - Date.parse(x.at)) < 120000);
+        if (dup) continue;
+      }
+      const tms = list.map((x) => x.tm_id || x.sensor_id).sort().join(', ');
+      let message;
+      if (!coachId) {
+        message = `Sensor ${first.sensor_id} offline (no data > ${t.CFG_OFFLINE_SECONDS}s)`;
+      } else {
+        const total = this.allSensors().filter((x) => x.coach_id === coachId).length;
+        message = list.length >= total
+          ? `Coach ${coachId} offline - all ${total} sensors (${tms}) sent no data > ${t.CFG_OFFLINE_SECONDS}s`
+          : `Coach ${coachId}: ${list.length} of ${total} sensors offline (${tms}) - no data > ${t.CFG_OFFLINE_SECONDS}s`;
+      }
+      this._raise({ severity: 'offline', sensor_id: first.sensor_id, coach_id: coachId,
+        emu_id: first.emu_id, tm_id: coachId ? tms : first.tm_id, message });
     }
   }
 
