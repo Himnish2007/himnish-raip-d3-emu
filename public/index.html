@@ -351,9 +351,9 @@
     <section class="view" id="view-assets">
       <div class="view-head"><h2>Administration</h2><span class="desc" id="adminScopeNote"></span></div>
 
-      <div class="view-head"><h2 style="font-size:14px">Alert Thresholds</h2><span class="desc">Admin-editable · applies fleet-wide immediately · Log interval is the ONLY control for how often every push-mode field device logs data — takes effect on each device's next 5-min config refresh, no restart needed. A per-device override still exists in Field Devices for rare exceptions.</span></div>
+      <div class="view-head"><h2 style="font-size:14px">Alert Thresholds</h2><span class="desc">Admin-editable · applies fleet-wide immediately · Device push interval = how often every push-mode field device sends data (keeps ONLINE/OFFLINE status fast; takes effect on each device's next 5-min config refresh). Data logging interval = how often a reading is stored to the database (0 = store every push); applies immediately. No restart needed. A per-device push override still exists in Field Devices for rare exceptions.</span></div>
       <div style="background:var(--warn-bg);border:1px solid var(--warn);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--text)">
-        ⚠️ If a device is still logging at a rate that doesn't match this value, check its row in <b>Field Devices</b> — if "Interval" shows an override (not "global"), remove the override so it follows Log interval.
+        ⚠️ If a device is still logging at a rate that doesn't match this value, check its row in <b>Field Devices</b> — if "Interval" shows an override (not "global"), remove the override so it follows Device push interval.
       </div>
       <div class="panel" style="padding:16px;margin-bottom:18px">
         <div class="row" id="thRow">
@@ -363,7 +363,8 @@
           <div class="f"><label>Offline after (s)</label><input class="inp" id="thOff" type="number" style="width:120px"></div>
           <div class="f"><label>Low battery ≤ %</label><input class="inp" id="thBat" type="number" style="width:120px"></div>
           <div class="f"><label>Rapid rise ≥ °C/min</label><input class="inp" id="thRise" type="number" step="0.5" style="width:130px"></div>
-          <div class="f"><label>Log interval (s)</label><input class="inp" id="thLog" type="number" min="5" style="width:120px"></div>
+          <div class="f"><label>Device push interval (s)</label><input class="inp" id="thLog" type="number" min="5" style="width:150px"></div>
+          <div class="f"><label>Data logging interval (s)</label><input class="inp" id="thDbLog" type="number" min="0" style="width:160px" title="One stored DB row per sensor every N seconds. 0 = store every push."></div>
           <div class="f"><label>&nbsp;</label><button class="btn ghost" id="thSave">Save thresholds</button></div>
         </div>
       </div>
@@ -1242,7 +1243,8 @@
     $('#thWarn').value=th.CFG_WARN_TEMP;$('#thHigh').value=th.CFG_HIGH_TEMP;$('#thCrit').value=th.CFG_CRIT_TEMP;
     $('#thOff').value=th.CFG_OFFLINE_SECONDS;$('#thBat').value=th.CFG_LOW_BATTERY;$('#thRise').value=th.CFG_RISE_RATE!=null?th.CFG_RISE_RATE:3;
     $('#thLog').value=th.CFG_LOG_INTERVAL!=null?th.CFG_LOG_INTERVAL:20;
-    ['thWarn','thHigh','thCrit','thOff','thBat','thRise','thLog'].forEach(function(id){$('#'+id).disabled=ro;});
+    $('#thDbLog').value=th.CFG_DB_LOG_INTERVAL!=null?th.CFG_DB_LOG_INTERVAL:600;
+    ['thWarn','thHigh','thCrit','thOff','thBat','thRise','thLog','thDbLog'].forEach(function(id){$('#'+id).disabled=ro;});
     // users
     var users=await api('/users');var tu=$('#adminUsers');tu.innerHTML='';
     var GLOBAL_ROLES=['super_admin','railway_hq'];
@@ -1310,7 +1312,7 @@
     var coach=prompt('Assign to Coach id (e.g. MC-01):',dv?(dv.coach_id||''):'');if(coach===null)return;
     var emu=prompt('EMU id (e.g. EMU-01):',dv?(dv.emu_id||''):'');
     var tags=prompt('Modbus tags for TM1,TM2,TM3,TM4 (comma separated):',dv?[dv.tag1,dv.tag2,dv.tag3,dv.tag4].join(','):'1.3,1.4,1.5,1.6');
-    var iv=prompt('Per-device interval OVERRIDE in seconds — leave blank to use the global\n"Log interval (s)" from Admin → Thresholds (recommended):',dv?(dv.post_interval_override||''):'');
+    var iv=prompt('Per-device interval OVERRIDE in seconds — leave blank to use the global\n"Device push interval (s)" from Admin → Thresholds (recommended):',dv?(dv.post_interval_override||''):'');
     var en=confirm('Enabled? OK = enabled, Cancel = disabled');
     var t=(tags||'1.3,1.4,1.5,1.6').split(',').map(function(x){return x.trim();});
     adminCall('/devices-registry'+(dv?'/'+dv.device_id:''),dv?'PUT':'POST',{device_id:id,coach_id:coach,emu_id:emu,tag1:t[0],tag2:t[1],tag3:t[2],tag4:t[3],post_interval_override:iv?+iv:null,enabled:en});
@@ -1372,7 +1374,8 @@
   async function saveThresholds(){
     var body={CFG_WARN_TEMP:+$('#thWarn').value,CFG_HIGH_TEMP:+$('#thHigh').value,CFG_CRIT_TEMP:+$('#thCrit').value,
       CFG_OFFLINE_SECONDS:+$('#thOff').value,CFG_LOW_BATTERY:+$('#thBat').value,CFG_RISE_RATE:+$('#thRise').value,
-      CFG_LOG_INTERVAL:Math.max(5,+$('#thLog').value||20)};
+      CFG_LOG_INTERVAL:Math.max(5,+$('#thLog').value||20),
+      CFG_DB_LOG_INTERVAL:Math.max(0,+$('#thDbLog').value||0)};
     try{await api('/thresholds',{method:'PUT',body:JSON.stringify(body)});THRESH_CACHE=null;$('#thSave').textContent='Saved ✓';setTimeout(function(){$('#thSave').textContent='Save thresholds';},1500);}
     catch(e){alert(e.message);}
   }

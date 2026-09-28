@@ -183,9 +183,10 @@ class Store {
   // ===== Thresholds =======================================================
   getThresholds() { return this.thresholds; }
   setThresholds(patch, user) {
-    const keys = ['CFG_WARN_TEMP', 'CFG_HIGH_TEMP', 'CFG_CRIT_TEMP', 'CFG_OFFLINE_SECONDS', 'CFG_LOW_BATTERY', 'CFG_RISE_RATE', 'CFG_LOG_INTERVAL'];
+    const keys = ['CFG_WARN_TEMP', 'CFG_HIGH_TEMP', 'CFG_CRIT_TEMP', 'CFG_OFFLINE_SECONDS', 'CFG_LOW_BATTERY', 'CFG_RISE_RATE', 'CFG_LOG_INTERVAL', 'CFG_DB_LOG_INTERVAL'];
     for (const k of keys) if (patch[k] != null && Number.isFinite(Number(patch[k]))) this.thresholds[k] = Number(patch[k]);
     if (this.thresholds.CFG_LOG_INTERVAL < 5) this.thresholds.CFG_LOG_INTERVAL = 5;
+    if (!(this.thresholds.CFG_DB_LOG_INTERVAL >= 0)) this.thresholds.CFG_DB_LOG_INTERVAL = 0;
     this.logAudit({ user, action: 'set_thresholds', detail: JSON.stringify(this.thresholds) });
     this._persist();
     return this.thresholds;
@@ -713,6 +714,17 @@ class Store {
   coachHistory(coach_id) { return this.swaps.filter((s) => s.coach_id === coach_id); }
 
   // ===== Ingestion ========================================================
+  _shouldArchive(sensorId, eventTime) {
+    const everyMs = (Number(this.getThresholds().CFG_DB_LOG_INTERVAL) || 0) * 1000;
+    if (!everyMs) return true;
+    if (!this._lastArchive) this._lastArchive = new Map();
+    const ts = Date.parse(eventTime);
+    const last = this._lastArchive.get(sensorId) || 0;
+    // small tolerance so push-time jitter never skips a whole interval
+    if (ts - last >= everyMs - Math.min(30000, everyMs * 0.25)) { this._lastArchive.set(sensorId, ts); return true; }
+    return false;
+  }
+
   ingestReading(r) {
     this._ingestCount++;
     const t = this.getThresholds();
@@ -762,7 +774,9 @@ class Store {
     this.series.set(r.sensor_id, buf);
 
     // Durable archive to PostgreSQL (never blocks or crashes the live path).
-    if (this.db) this.db.insertReading(meta).catch(() => {});
+    // Live dashboard/alerts update on every push; the DB row is written only once
+    // per CFG_DB_LOG_INTERVAL per sensor (0 = every push). Editable in Admin -> Thresholds.
+    if (this.db && this._shouldArchive(meta.sensor_id, eventTime)) this.db.insertReading(meta).catch(() => {});
 
     // Predictive: rapid temperature-rise detection over the recent window.
     if (meta.temperature != null && meta.status !== 'offline') {

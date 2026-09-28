@@ -57,6 +57,10 @@ const config = {
   // Applies to the RUT200 IP-pull poller; per-device push interval (Field Devices)
   // is set separately and takes priority for devices that use push mode.
   CFG_LOG_INTERVAL: num('CFG_LOG_INTERVAL', num('POLL_INTERVAL', 20)),
+  // Database logging interval (seconds): one stored row per sensor per interval.
+  // Devices may push more often (CFG_LOG_INTERVAL) so OFFLINE is detected fast.
+  // Starting default only - editable live in Admin -> Thresholds. 0 = store every push.
+  CFG_DB_LOG_INTERVAL: num('CFG_DB_LOG_INTERVAL', 600),
 
   // Email (SMTP) transport for email alerts. If unset, email runs dry-run.
   SMTP_HOST: process.env.SMTP_HOST || '',
@@ -106,7 +110,8 @@ config.defaultThresholds = function () {
     CFG_CRIT_TEMP: config.CFG_CRIT_TEMP, CFG_OFFLINE_SECONDS: config.CFG_OFFLINE_SECONDS,
     CFG_LOW_BATTERY: config.CFG_LOW_BATTERY,
     CFG_RISE_RATE: num('CFG_RISE_RATE', 3), // deg C per minute -> rapid-rise alert
-    CFG_LOG_INTERVAL: config.CFG_LOG_INTERVAL, // seconds — data logging / poll interval
+    CFG_LOG_INTERVAL: config.CFG_LOG_INTERVAL, // seconds — device push / poll interval
+    CFG_DB_LOG_INTERVAL: config.CFG_DB_LOG_INTERVAL, // seconds — DB logging interval (0 = every push)
   };
 };
 
