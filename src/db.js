@@ -88,18 +88,19 @@ function createDb(databaseUrl, injectedClient) {
   async function historyRange(sensorId, fromIso, toIso, cap) {
     const res = await q(
       `SELECT ts, temperature FROM readings
-       WHERE sensor_id = $1 AND ts BETWEEN $2 AND $3 ORDER BY ts ASC LIMIT $4`,
+       WHERE sensor_id = $1 AND ts BETWEEN $2 AND $3 ORDER BY ts DESC LIMIT $4`,
       [sensorId, fromIso, toIso, cap || 20000]);
-    return res.rows;
+    // newest-first + reverse: if the cap is hit, the OLDEST rows are dropped, never the latest ones
+    return res.rows.reverse();
   }
 
   // All readings for one coach in a date range (for historical reports).
   async function historyForCoach(coachId, fromIso, toIso, cap) {
     const res = await q(
       `SELECT sensor_id, tm_id, ts, temperature FROM readings
-       WHERE coach_id = $1 AND ts BETWEEN $2 AND $3 ORDER BY ts ASC LIMIT $4`,
+       WHERE coach_id = $1 AND ts BETWEEN $2 AND $3 ORDER BY ts DESC LIMIT $4`,
       [coachId, fromIso, toIso, cap || 50000]);
-    return res.rows;
+    return res.rows.reverse();
   }
 
   // Retention: delete readings older than N days. Returns rows removed.

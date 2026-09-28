@@ -9,6 +9,12 @@ const config = require('./config');
 // Accepts a single reading or a coach batch (recommended).
 // ---------------------------------------------------------------------------
 
+// Ids must be plain identifiers (no markup / control chars) so device-supplied text can never
+// become script in the dashboard, and batches / auto-provisioning are bounded.
+const ID_RE = /^[A-Za-z0-9 ._:@\-]{1,64}$/;
+const MAX_BATCH = 500;
+const MAX_COACHES = Number(process.env.MAX_COACHES) || 2000;
+
 function ingestRouter(store) {
   const router = express.Router();
 
@@ -34,6 +40,10 @@ function ingestRouter(store) {
   function validateReading(r, ctx) {
     if (!r || typeof r !== 'object') return 'reading must be an object';
     if (!r.sensor_id) return 'sensor_id required';
+    for (const k of ['sensor_id', 'coach_id', 'emu_id', 'tm_id']) {
+      if (r[k] != null && r[k] !== '' && !ID_RE.test(String(r[k]))) return `invalid ${k} (letters, digits, space . _ : @ - only, max 64)`;
+    }
+    if (r.coach_id && !store.coaches.has(String(r.coach_id)) && store.coaches.size >= MAX_COACHES) return `coach limit reached (${MAX_COACHES}) - register coaches in Admin`;
     if (!(r.coach_id || ctx.coach_id)) return `coach_id required (sensor ${r.sensor_id})`;
     const t = Number(r.temperature);
     if (r.temperature == null || !Number.isFinite(t)) return `temperature must be numeric (sensor ${r.sensor_id})`;
@@ -50,6 +60,7 @@ function ingestRouter(store) {
     if (Array.isArray(body.readings)) readings = body.readings;
     else if (body.sensor_id) readings = [body];
     else return res.status(400).json({ ok: false, error: 'Send a single reading or a readings[] batch' });
+    if (readings.length > MAX_BATCH) return res.status(413).json({ ok: false, error: `batch too large (max ${MAX_BATCH} readings)` });
 
     const accepted = [], errors = [];
     for (const raw of readings) {

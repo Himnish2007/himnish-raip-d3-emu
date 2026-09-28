@@ -591,6 +591,8 @@
 
   function $(s){return document.querySelector(s);}
   function el(t,c,txt){var e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e;}
+  // HTML-escape any value that is concatenated into innerHTML / popups (device- and admin-supplied text is untrusted).
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   // ---- Half-circle temperature gauge (0-110°C scale) ----
   // ---- Half-circle needle temperature gauge — 3 colour zones (green/amber/red) + needle, like LOCO TM CMS ----
   var THRESH_CACHE=null;
@@ -1042,13 +1044,13 @@
       var bad=d.coaches.some(function(c){return c.status==='offline'||c.status==='no-data'||c.worst==='critical'||c.worst==='high';});
       var color=!d.coaches.length?'#888':(bad?'#dc2626':'#16a34a');
       var mk=L.circleMarker([d.lat,d.lng],{radius:11,color:color,fillColor:color,fillOpacity:0.85,weight:2});
-      var html='<b>'+d.name+'</b> ('+d.depot_id+')<br>'+(d.region||'')+'<hr style="margin:4px 0">';
-      html+=d.coaches.length?d.coaches.map(function(c){return c.coach_id+' — <b>'+c.status+'</b>'+(c.worst&&c.worst!=='no-data'&&c.worst!=='normal'?' ('+c.worst+')':'');}).join('<br>'):'<i>No coaches assigned</i>';
+      var html='<b>'+esc(d.name)+'</b> ('+esc(d.depot_id)+')<br>'+esc(d.region||'')+'<hr style="margin:4px 0">';
+      html+=d.coaches.length?d.coaches.map(function(c){return esc(c.coach_id)+' — <b>'+esc(c.status)+'</b>'+(c.worst&&c.worst!=='no-data'&&c.worst!=='normal'?' ('+esc(c.worst)+')':'');}).join('<br>'):'<i>No coaches assigned</i>';
       mk.bindPopup(html);mk.addTo(MAP);MAP_MARKERS.push(mk);
     });
     setTimeout(function(){try{MAP.invalidateSize();}catch(e){}},120);
     var noGeo=data.filter(function(d){return d.lat==null||d.lng==null;});
-    $('#noGeo').innerHTML=noGeo.length?('<b>Not on map</b> (add Latitude/Longitude in Admin → Depots): '+noGeo.map(function(d){return d.depot_id;}).join(', ')):'';
+    $('#noGeo').innerHTML=noGeo.length?('<b>Not on map</b> (add Latitude/Longitude in Admin → Depots): '+noGeo.map(function(d){return esc(d.depot_id);}).join(', ')):'';
     $('#mapNote').textContent=withGeo.length?'Click a depot marker to see its coaches and status.':'No depot has coordinates yet — add lat/lng in Admin → Depots.';
   }
 
@@ -1367,7 +1369,10 @@
   }
   function mkBtn(label,fn){var b=el('button','mini',label);b.style.marginRight='6px';b.addEventListener('click',fn);return b;}
   async function adminCall(path,method,body){
-    try{await api(path,{method:method,body:body?JSON.stringify(body):undefined});renderAdmin();}
+    try{
+      var r=await api(path,{method:method,body:body?JSON.stringify(body):undefined});renderAdmin();
+      if(r&&r.orphan_devices&&r.orphan_devices.length)alert('Coach deleted.\n\nField device(s) still registered to it: '+r.orphan_devices.join(', ')+'\n\nDelete them in Admin → Field Devices too, otherwise the coach will re-appear as soon as that device sends data.');
+    }
     catch(e){alert(e.message);}
   }
 
@@ -1617,7 +1622,7 @@
       var online=tms.filter(function(t){return t.status!=='offline';});
       function list(rows,cols){ if(!rows.length)return '<div class="desc">None found. 👍</div>';
         var h='<table style="width:100%"><thead><tr>'+cols.map(function(c){return '<th>'+c[0]+'</th>';}).join('')+'</tr></thead><tbody>';
-        h+=rows.map(function(r){return '<tr>'+cols.map(function(c){return '<td>'+(r[c[1]]==null?'—':r[c[1]])+'</td>';}).join('')+'</tr>';}).join('');
+        h+=rows.map(function(r){return '<tr>'+cols.map(function(c){return '<td>'+(r[c[1]]==null?'—':esc(r[c[1]]))+'</td>';}).join('')+'</tr>';}).join('');
         return h+'</tbody></table>'; }
       var ans='';
       if(!q||q==='help'){
@@ -1659,7 +1664,7 @@
         ans='<div class="desc">Didn\'t catch that. Try: <b>critical</b>, <b>offline</b>, <b>hottest</b>, <b>battery</b>, <b>alerts</b>, <b>summary</b> — or type <b>help</b>.</div>';
       }
       out.innerHTML=ans;
-    }catch(e){out.innerHTML='<div class="desc">Error: '+e.message+'</div>';}
+    }catch(e){out.innerHTML='<div class="desc">Error: '+esc(e.message)+'</div>';}
   }
 
   async function renderHealth(){

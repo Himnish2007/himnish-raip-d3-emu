@@ -27,8 +27,12 @@ function requireAuth(req, res, next) {
   // Emailed report links carry a signed ?token= (only accepted on report paths).
   if (!token && req.query && req.query.token && req.path.indexOf('/report/') >= 0) token = req.query.token;
   if (!token) return res.status(401).json({ error: 'Missing bearer token' });
-  try { req.user = jwt.verify(token, config.JWT_SECRET); next(); }
+  let user;
+  try { user = jwt.verify(token, config.JWT_SECRET); }
   catch { return res.status(401).json({ error: 'Invalid or expired token' }); }
+  // Emailed report links use a limited-scope token: valid for /report/ paths only, never for the rest of the API.
+  if (user.scope === 'report' && req.path.indexOf('/report/') < 0) return res.status(403).json({ error: 'Report link token cannot be used for this endpoint' });
+  req.user = user; next();
 }
 
 function requireRole(...roles) {

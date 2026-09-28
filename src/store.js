@@ -122,24 +122,33 @@ class Store {
     if (!this.db) return;
     try {
       const latest = await this.db.latestPerSensor();
+      const offlineCut = Date.now() - this.getThresholds().CFG_OFFLINE_SECONDS * 1000;
+      let skipped = 0;
       for (const r of latest) {
+        // A coach the admin deleted is gone from master data but its readings stay in the DB (history is kept).
+        // Never rebuild live sensors for it, or the deleted coach re-appears on every restart/redeploy.
+        if (r.coach_id && !this.coaches.has(r.coach_id)) { skipped++; continue; }
+        const lastUpdate = new Date(r.ts).toISOString();
         this.sensors.set(r.sensor_id, {
           sensor_id: r.sensor_id, tm_id: r.tm_id, coach_id: r.coach_id, emu_id: r.emu_id,
           temperature: r.temperature == null ? null : Number(r.temperature),
           battery_health: r.battery == null ? null : Number(r.battery),
           signal_strength: r.signal == null ? null : Number(r.signal),
-          sensor_type: 'wireless', status: 'online', last_update: new Date(r.ts).toISOString(),
+          // Already stale at startup -> restore as offline (silently) so a redeploy does not re-send
+          // "offline" alerts/emails for coaches that were offline before the restart.
+          sensor_type: 'wireless', status: Date.parse(lastUpdate) < offlineCut ? 'offline' : 'online', last_update: lastUpdate,
         });
       }
       const since = new Date(Date.now() - (hours || 6) * 3600 * 1000).toISOString();
       const rows = await this.db.recentSeries(since, 200000);
       for (const row of rows) {
+        if (!this.sensors.has(row.sensor_id)) continue;   // skipped (deleted coach) or unknown sensor
         const buf = this.series.get(row.sensor_id) || [];
         buf.push({ t: new Date(row.ts).toISOString(), temperature: row.temperature == null ? null : Number(row.temperature) });
         if (buf.length > MAX_SERIES) buf.shift();
         this.series.set(row.sensor_id, buf);
       }
-      console.log(`[store] backfilled ${latest.length} sensors and ${rows.length} samples from PostgreSQL`);
+      console.log(`[store] backfilled ${latest.length - skipped} sensors and ${rows.length} samples from PostgreSQL` + (skipped ? ` (skipped ${skipped} sensor(s) of deleted coaches)` : ''));
     } catch (e) {
       console.error('[store] backfill failed:', e.message);
     }
@@ -184,9 +193,16 @@ class Store {
   getThresholds() { return this.thresholds; }
   setThresholds(patch, user) {
     const keys = ['CFG_WARN_TEMP', 'CFG_HIGH_TEMP', 'CFG_CRIT_TEMP', 'CFG_OFFLINE_SECONDS', 'CFG_LOW_BATTERY', 'CFG_RISE_RATE', 'CFG_LOG_INTERVAL', 'CFG_DB_LOG_INTERVAL'];
-    for (const k of keys) if (patch[k] != null && Number.isFinite(Number(patch[k]))) this.thresholds[k] = Number(patch[k]);
-    if (this.thresholds.CFG_LOG_INTERVAL < 5) this.thresholds.CFG_LOG_INTERVAL = 5;
-    if (!(this.thresholds.CFG_DB_LOG_INTERVAL >= 0)) this.thresholds.CFG_DB_LOG_INTERVAL = 0;
+    // validate on a copy first so a bad request can never leave live thresholds half-applied
+    const next = Object.assign({}, this.thresholds);
+    for (const k of keys) if (patch[k] != null && Number.isFinite(Number(patch[k]))) next[k] = Number(patch[k]);
+    if (next.CFG_LOG_INTERVAL < 5) next.CFG_LOG_INTERVAL = 5;
+    if (!(next.CFG_DB_LOG_INTERVAL >= 0)) next.CFG_DB_LOG_INTERVAL = 0;
+    if (!(next.CFG_WARN_TEMP < next.CFG_HIGH_TEMP && next.CFG_HIGH_TEMP < next.CFG_CRIT_TEMP)) throw new Error('Temperature limits must satisfy Warning < High < Critical');
+    if (!(next.CFG_OFFLINE_SECONDS >= 30)) throw new Error('Offline after must be at least 30 seconds');
+    if (!(next.CFG_LOW_BATTERY >= 0 && next.CFG_LOW_BATTERY <= 100)) throw new Error('Low battery % must be between 0 and 100');
+    if (!(next.CFG_RISE_RATE > 0)) throw new Error('Rapid rise must be greater than 0');
+    Object.assign(this.thresholds, next);
     this.logAudit({ user, action: 'set_thresholds', detail: JSON.stringify(this.thresholds) });
     this._persist();
     return this.thresholds;
@@ -195,12 +211,17 @@ class Store {
   // ===== Alert config (SMS/Email routing, escalation, templates) ==========
   getAlertConfig() { return this.alertConfig; }
   setAlertConfig(patch, user) {
+    // never let request keys such as "__proto__" reach Object.assign (prototype pollution)
+    const unsafeKey = (k) => k === '__proto__' || k === 'constructor' || k === 'prototype';
+    const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
     if (patch.rules) for (const sev of Object.keys(patch.rules)) {
-      if (!this.alertConfig.rules[sev]) this.alertConfig.rules[sev] = { channels: [], emails: [], phones: [], escalate_to: '', escalate_after_min: 0 };
+      if (unsafeKey(sev)) continue;
+      if (!own(this.alertConfig.rules, sev)) this.alertConfig.rules[sev] = { channels: [], emails: [], phones: [], escalate_to: '', escalate_after_min: 0 };
       Object.assign(this.alertConfig.rules[sev], patch.rules[sev]);
     }
     if (patch.escalation_tiers) for (const k of Object.keys(patch.escalation_tiers)) {
-      this.alertConfig.escalation_tiers[k] = Object.assign(this.alertConfig.escalation_tiers[k] || { name: k }, patch.escalation_tiers[k]);
+      if (unsafeKey(k)) continue;
+      this.alertConfig.escalation_tiers[k] = Object.assign(own(this.alertConfig.escalation_tiers, k) ? this.alertConfig.escalation_tiers[k] : { name: k }, patch.escalation_tiers[k]);
     }
     if (patch.templates) Object.assign(this.alertConfig.templates, patch.templates);
     if (patch.report) this.alertConfig.report = Object.assign(this.alertConfig.report || {}, patch.report);
@@ -269,11 +290,28 @@ class Store {
     return Object.assign({ _backup_version: 1, _exported_at: new Date().toISOString() }, this._snapshot());
   }
   importBackup(snapshot, actor) {
-    if (!snapshot || typeof snapshot !== 'object') throw new Error('invalid backup');
-    this.users.clear(); this.emus.clear(); this.coaches.clear(); this.assignment.clear();
-    this.userAssets.clear(); this.depots.clear(); this.devices.clear(); this.sensorRegistry.clear();
-    this.swaps = []; this.maintenance = [];
-    this._applySnapshot(snapshot);
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('invalid backup');
+    // Validate BEFORE touching live data: a wrong/empty file must never wipe users, coaches or field devices.
+    if (!snapshot._backup_version) throw new Error('not a RAIP backup file (missing _backup_version)');
+    if (!Array.isArray(snapshot.users) || !snapshot.users.some((u) => u && u.username && u.hash && u.role === 'super_admin')) {
+      throw new Error('backup has no super_admin user - restoring it would lock everyone out');
+    }
+    for (const k of ['emus', 'coaches', 'devices', 'depots']) {
+      if (snapshot[k] != null && !Array.isArray(snapshot[k])) throw new Error(`backup field "${k}" is malformed`);
+    }
+    const previous = this._snapshot();   // rollback point
+    const wipe = () => {
+      this.users.clear(); this.emus.clear(); this.coaches.clear(); this.assignment.clear();
+      this.userAssets.clear(); this.depots.clear(); this.devices.clear(); this.sensorRegistry.clear();
+      this.swaps = []; this.maintenance = [];
+    };
+    try {
+      wipe();
+      this._applySnapshot(snapshot);
+    } catch (e) {
+      wipe(); this._applySnapshot(previous);   // restore exactly what was there before
+      throw new Error('restore failed, nothing was changed: ' + e.message);
+    }
     this.logAudit({ user: actor, action: 'restore_backup', detail: 'master data restored from backup' });
     this.flushSync();
     return { users: this.users.size, emus: this.emus.size, coaches: this.coaches.size, depots: this.depots.size, devices: this.devices.size };
@@ -608,8 +646,10 @@ class Store {
     this.comm.delete(coach_id);
     // Remove the coach's live sensors/series so it stops appearing in views.
     for (const s of [...this.sensors.values()]) if (s.coach_id === coach_id) { this.sensors.delete(s.sensor_id); this.series.delete(s.sensor_id); }
-    this.logAudit({ user: actor, action: 'delete_coach', detail: coach_id });
+    const orphanDevices = [...this.devices.values()].filter((d) => d.coach_id === coach_id).map((d) => d.device_id);
+    this.logAudit({ user: actor, action: 'delete_coach', detail: coach_id + (orphanDevices.length ? ` (field device(s) still registered: ${orphanDevices.join(', ')})` : '') });
     this._persist();
+    return { orphan_devices: orphanDevices };
   }
   pollableCoaches() {
     return [...this.coaches.values()].filter((c) => c.poll_enabled && c.rut200_ip);

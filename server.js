@@ -63,7 +63,7 @@ async function bootstrap() {
       const base = cfg.base_url || config.REPORT_BASE_URL || '';
       // (a) configured control-room recipients (see everything)
       if (cfg.emails && cfg.emails.length) {
-        const token = jwt.sign({ sub: 'report-link', role: 'railway_hq' }, config.JWT_SECRET, { expiresIn: '3d' });
+        const token = jwt.sign({ sub: 'report-link', role: 'railway_hq', scope: 'report' }, config.JWT_SECRET, { expiresIn: '3d' });
         notifier.sendReportEmail(base, token, cfg.emails, store).catch((e) => console.error('[report]', e.message));
       }
       // (b) each user with an email gets a link scoped to THEIR assigned assets
@@ -71,7 +71,7 @@ async function bootstrap() {
       for (const u of store.listUsers()) {
         const su = store.getUser(u.username);
         if (!su || !su.email) continue;
-        const token = jwt.sign({ sub: u.username, role: u.role }, config.JWT_SECRET, { expiresIn: '3d' });
+        const token = jwt.sign({ sub: u.username, role: u.role, scope: 'report' }, config.JWT_SECRET, { expiresIn: '3d' });
         notifier.sendReportEmail(base, token, [su.email], store).catch(() => {});
         sent++;
       }
@@ -107,7 +107,9 @@ function rateLimit({ windowMs, max }) {
   const hits = new Map();
   setInterval(() => { const n = Date.now(); for (const [k, v] of hits) if (n > v.reset) hits.delete(k); }, windowMs).unref();
   return (req, res, next) => {
-    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'x').split(',')[0].trim();
+    // Use the RIGHT-most X-Forwarded-For entry (the one our own reverse proxy appended); the left-most is client-controlled and spoofable.
+    const xff = String(req.headers['x-forwarded-for'] || '');
+    const ip = (xff ? xff.split(',').pop().trim() : '') || req.socket.remoteAddress || 'x';
     const now = Date.now();
     let rec = hits.get(ip);
     if (!rec || now > rec.reset) { rec = { count: 0, reset: now + windowMs }; hits.set(ip, rec); }
@@ -195,13 +197,16 @@ process.on('uncaughtException', (e) => console.error('[uncaughtException]', e &&
 
 // Warn loudly if production is running with default secrets.
 function securityChecks() {
-  const prod = process.env.NODE_ENV === 'production';
-  if (prod && config.JWT_SECRET === 'himnish-raip-d3-dev-secret-change-me') {
+  if (config.JWT_SECRET === 'himnish-raip-d3-dev-secret-change-me') {
     console.warn('[SECURITY] JWT_SECRET is still the default — set a strong JWT_SECRET env var!');
   }
-  if (prod && config.DATA_API_KEY === 'himnish_emu_key_2025') {
+  if (config.DATA_API_KEY === 'himnish_emu_key_2025') {
     console.warn('[SECURITY] DATA_API_KEY is still the default — set your own DATA_API_KEY!');
   }
+  if (config.BOOTSTRAP_KEY === 'himnish_bootstrap_2025') {
+    console.warn('[SECURITY] BOOTSTRAP_KEY is still the default — rotate it (RUT scripts need the new key).');
+  }
+
   if (config.DEMO_MODE) console.warn('[NOTICE] DEMO_MODE is ON — synthetic data is being generated. Set DEMO_MODE=false for live hardware.');
 }
 securityChecks();
@@ -212,5 +217,10 @@ bootstrap().then(() => {
     console.log(`EMU Motor Coach TM Monitoring on :${config.PORT}`);
     console.log(`DEMO_MODE=${config.DEMO_MODE}  DATA_DIR=${config.DATA_DIR}  DB=${store.db ? 'PostgreSQL' : 'JSON+memory'}`);
     console.log(`thresholds: warn>${t.CFG_WARN_TEMP} high>${t.CFG_HIGH_TEMP} crit>${t.CFG_CRIT_TEMP}`);
+    // (checked after the store has loaded so the real admin account is visible)
+    try {
+      const au = store.getUser('admin');
+      if (au && require('bcryptjs').compareSync('himnish@2025', au.hash)) console.warn('[SECURITY] admin password is still the default (himnish@2025) — change it in Admin → Users!');
+    } catch (e) {}
   });
 }).catch((e) => { console.error('[server] bootstrap error:', e); process.exit(1); });
