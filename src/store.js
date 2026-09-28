@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const bcrypt = require('bcryptjs');
+const pw = require('./password');
 const config = require('./config');
 
 // ---------------------------------------------------------------------------
@@ -72,6 +72,7 @@ class Store {
     this.series = new Map();       // sensor_id -> [{ t, temperature }]
     this.alerts = [];
     this.audit = [];
+    this.secLog = [];              // sign-in / security events (kept across restarts, last 500)
     this.notifications = [];       // SMS/email delivery log, newest first
     this.comm = new Map();         // coach_id -> live comm telemetry (rssi, packet_loss, lte...)
     this._notifier = null;         // server sets: fn(alert) => dispatch
@@ -97,6 +98,8 @@ class Store {
     (s.devices || []).forEach((d) => this.devices.set(d.device_id, d));
     if (s.thresholds) this.thresholds = Object.assign(config.defaultThresholds(), s.thresholds);
     if (s.alertConfig) this.alertConfig = Object.assign(defaultAlertConfig(), s.alertConfig);
+    if (Array.isArray(s.audit) && !this.audit.length) this.audit = s.audit;
+    if (Array.isArray(s.secLog) && !this.secLog.length) this.secLog = s.secLog;
   }
 
   // Load master data. Prefers the DB state blob (most durable) when a DB is
@@ -158,6 +161,14 @@ class Store {
     clearTimeout(this._saveTimer);
     this._saveTimer = setTimeout(() => this.flushSync(), 200);
   }
+  // For frequent, low-value changes (a device's "last seen" time): save at most every 5 minutes.
+  // With 2000 field devices pulling config every 5 min, an immediate full save would rewrite ~1 MB
+  // several times per second. A restart/shutdown still saves everything (flushSync on SIGTERM).
+  _persistSlow() {
+    if (this._slowTimer) return;
+    this._slowTimer = setTimeout(() => { this._slowTimer = null; this.flushSync(); }, 5 * 60 * 1000);
+    if (this._slowTimer.unref) this._slowTimer.unref();
+  }
 
   _snapshot() {
     return {
@@ -173,6 +184,8 @@ class Store {
       devices: [...this.devices.values()],
       thresholds: this.thresholds,
       alertConfig: this.alertConfig,
+      audit: this.audit.slice(0, 1500),
+      secLog: this.secLog.slice(0, 500),
     };
   }
 
@@ -181,7 +194,7 @@ class Store {
     try {
       fs.mkdirSync(config.DATA_DIR, { recursive: true });
       const tmp = this._file + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(snapshot, null, 2));
+      fs.writeFileSync(tmp, JSON.stringify(snapshot), { mode: 0o600 });   // contains password hashes: owner-only file // compact: ~35% smaller and faster than pretty-printed
       fs.renameSync(tmp, this._file); // atomic
     } catch (e) {
       console.error('[store] persist failed:', e.message);
@@ -354,8 +367,8 @@ class Store {
     if (!d) return null;
     d.last_seen = new Date().toISOString();
     if (ip) d.last_ip = ip;
-    // note: last_seen change is persisted lazily (debounced)
-    this._persist();
+    // note: last_seen is persisted lazily (at most every 5 min), see _persistSlow()
+    this._persistSlow();
     return {
       ok: true,
       enabled: d.enabled !== false,
@@ -464,8 +477,9 @@ class Store {
   }
 
   // ===== Users (CRUD) =====================================================
-  seedUser({ username, password, role, depot_id, email, phone }) {
-    this.users.set(username, { username, hash: bcrypt.hashSync(password, 10), role, depot_id: depot_id || null, email: email || null, phone: phone || null });
+  seedUser({ username, password, role, depot_id, email, phone, must_change }) {
+    this.users.set(username, { username, hash: pw.hashSync(password), role, depot_id: depot_id || null, email: email || null, phone: phone || null,
+      must_change: !!must_change, token_version: 0, disabled: false, pw_changed_at: new Date().toISOString() });
     if (!this.userAssets.has(username)) this.userAssets.set(username, { emus: [], coaches: [] });
     this._persist();
   }
@@ -475,35 +489,51 @@ class Store {
       const global = config.GLOBAL_ROLES.includes(u.role);
       const a = this.userAssets.get(u.username) || { emus: [], coaches: [] };
       return { username: u.username, role: u.role, depot_id: u.depot_id, email: u.email || null, phone: u.phone || null,
+        disabled: !!u.disabled, must_change: !!u.must_change, totp_enabled: !!(u.totp && u.totp.enabled),
+        last_login: u.last_login || null, last_login_ip: u.last_login_ip || null, pw_changed_at: u.pw_changed_at || null,
         all_access: global, emus: global ? [] : a.emus, coaches: global ? [] : a.coaches };
     });
   }
-  createUser({ username, password, role, depot_id, email, phone }, actor) {
+  async createUser({ username, password, role, depot_id, email, phone }, actor) {
+    username = String(username || '').trim();
     if (!username || !password || !role) throw new Error('username, password, role required');
-    if (String(password).length < 8) throw new Error('password must be at least 8 characters');
-    if (this.users.has(username)) throw new Error('user already exists');
+    if (!/^[A-Za-z0-9._@-]{3,64}$/.test(username)) throw new Error('username: 3-64 characters, letters, digits and . _ @ - only');
+    const bad = pw.policyError(password, username); if (bad) throw new Error(bad);
+    if ([...this.users.keys()].some((k) => k.toLowerCase() === username.toLowerCase())) throw new Error('user already exists');
     if (!config.ROLES.includes(role)) throw new Error('invalid role');
-    this.users.set(username, { username, hash: bcrypt.hashSync(password, 10), role, depot_id: depot_id || null, email: email || null, phone: phone || null });
+    const hash = await pw.hash(password);
+    // the admin who typed this password must not be the one who knows the real password: the user must choose their own at first sign-in
+    this.users.set(username, { username, hash, role, depot_id: depot_id || null, email: email || null, phone: phone || null,
+      must_change: true, token_version: 0, disabled: false, pw_changed_at: new Date().toISOString() });
     this.userAssets.set(username, { emus: [], coaches: [] });
     this.logAudit({ user: actor, action: 'create_user', detail: username + ' (' + role + ')' });
     this._persist();
-    return { username, role, depot_id: depot_id || null, email: email || null, phone: phone || null };
+    return { username, role, depot_id: depot_id || null, email: email || null, phone: phone || null, must_change: true };
   }
-  updateUser(username, patch, actor) {
+  async updateUser(username, patch, actor) {
     const u = this.users.get(username);
     if (!u) throw new Error('user not found');
-    if (patch.role) { if (!config.ROLES.includes(patch.role)) throw new Error('invalid role'); u.role = patch.role; }
+    if (patch.role) {
+      if (!config.ROLES.includes(patch.role)) throw new Error('invalid role');
+      if (u.role === 'super_admin' && patch.role !== 'super_admin' && [...this.users.values()].filter((x) => x.role === 'super_admin' && !x.disabled).length < 2) throw new Error('cannot demote the last active super admin');
+      u.role = patch.role;
+    }
     if (patch.depot_id !== undefined) u.depot_id = patch.depot_id || null;
     if (patch.email !== undefined) u.email = patch.email || null;
     if (patch.phone !== undefined) u.phone = patch.phone || null;
-    if (patch.password) { if (String(patch.password).length < 8) throw new Error('password must be at least 8 characters'); u.hash = bcrypt.hashSync(patch.password, 10); }
-    this.logAudit({ user: actor, action: 'update_user', detail: username });
+    if (patch.password) {
+      const bad = pw.policyError(patch.password, username); if (bad) throw new Error(bad);
+      u.hash = await pw.hash(patch.password); u.must_change = true; u.token_version = (u.token_version || 0) + 1; u.pw_changed_at = new Date().toISOString();
+    }
+    this.logAudit({ user: actor, action: 'update_user', detail: username + (patch.password ? ' (password reset)' : '') });
     this._persist();
     return { username: u.username, role: u.role, depot_id: u.depot_id, email: u.email, phone: u.phone };
   }
   deleteUser(username, actor) {
     if (!this.users.has(username)) throw new Error('user not found');
     if (username === actor) throw new Error('cannot delete your own account');
+    const victim = this.users.get(username);
+    if (victim.role === 'super_admin' && [...this.users.values()].filter((x) => x.role === 'super_admin' && !x.disabled).length < 2) throw new Error('cannot delete the last active super admin');
     this.users.delete(username);
     this.userAssets.delete(username);
     this.logAudit({ user: actor, action: 'delete_user', detail: username });
@@ -899,6 +929,11 @@ class Store {
     const a = this.alerts.find((x) => x.id === Number(id)); if (!a) return null;
     a.state = 'acknowledged'; a.acknowledged_by = user; a.acknowledged_at = new Date().toISOString();
     this.logAudit({ user, action: 'ack_alert', detail: 'alert #' + id }); return a;
+  }
+  logSecurity(e) {
+    this.secLog.unshift(Object.assign({ at: new Date().toISOString() }, e));
+    if (this.secLog.length > 3000) this.secLog.length = 3000;
+    this._persistSlow();
   }
   logAudit({ user, action, detail }) {
     this.audit.unshift({ user, action, detail, at: new Date().toISOString() });

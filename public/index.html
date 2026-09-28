@@ -194,7 +194,28 @@
   .hm-cell{border-radius:6px;padding:12px 6px;text-align:center;color:#fff;font-family:var(--mono);font-weight:600;font-size:14px;cursor:pointer}
   .hm-head{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:center;padding-bottom:4px}
   .scalebar{height:12px;border-radius:6px;background:linear-gradient(90deg,#1e6fd0,#16a34a,#d97706,#dc2626);width:240px}
-  /* ================= Mobile / tablet responsive layer ================= */
+  /* ================= Account security screens ================= */
+  #secModal{position:fixed;inset:0;background:rgba(0,25,45,.62);display:none;grid-template-columns:minmax(0,1fr);place-items:center;z-index:120;overflow-y:auto;padding:16px}
+  .sec-card{box-sizing:border-box;width:min(440px,100%);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;box-shadow:var(--shadow);position:relative;margin:auto}
+  .sec-card::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:var(--tricolor);border-radius:14px 14px 0 0}
+  .sec-card h3{margin:4px 0 6px;font-size:17px}
+  .sec-card .sub{color:var(--muted);font-size:12.5px;margin:0 0 12px;line-height:1.45}
+  .sec-card .field{margin-bottom:10px}
+  .sec-card .field input{width:100%}
+  .sec-card .row2{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .sec-card .row2 .btn,.sec-card .row2 .mini{flex:1 1 auto}
+  .sec-card .err{color:var(--crit);font-size:12.5px;min-height:18px;margin-top:6px}
+  .sec-card .okmsg{color:var(--ok);font-size:12.5px}
+  .sec-card .secret{font-family:'JetBrains Mono',monospace;font-size:17px;letter-spacing:2px;overflow-wrap:anywhere;word-break:normal;background:var(--brand-dim);border:1px dashed var(--line);border-radius:8px;padding:10px;text-align:center;margin:8px 0}
+  .sec-card pre.codes{font-family:'JetBrains Mono',monospace;font-size:14px;background:var(--brand-dim);border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0;columns:2;white-space:pre-wrap}
+  .sec-card ul.rules{margin:4px 0 10px 18px;padding:0;color:var(--muted);font-size:12px;line-height:1.5}
+  .sec-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px;margin:8px 0 12px}
+  .sec-kv b{color:var(--muted);font-weight:600}
+  .badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;border:1px solid var(--line);margin-right:4px}
+  .badge.ok{background:rgba(16,150,90,.12);color:var(--ok)} .badge.bad{background:rgba(220,40,60,.12);color:var(--crit)} .badge.warn{background:rgba(230,140,0,.14);color:#b86e00}
+  #view-assets table td .mini{margin:2px 3px 2px 0}
+
+  /* ================= Mobile / tablet responsive layer =================
   html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   body{-webkit-tap-highlight-color:transparent;padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
   img,svg,canvas,video{max-width:100%}
@@ -307,12 +328,22 @@
     <div style="text-align:center;margin-bottom:14px"><img src="/assets/himnish-logo.png" alt="Himnish Limited" style="height:96px;width:auto"/></div>
     <div style="text-align:center"><h1 style="margin:0">EMU Motor Coach TM</h1>
     <div class="sub" style="margin:4px 0 20px">Temperature Monitoring System · Himnish Limited</div></div>
-    <div class="field"><label>Username</label><input id="u" autocomplete="username" /></div>
-    <div class="field"><label>Password</label><input id="p" type="password" autocomplete="current-password" /></div>
-    <button class="btn" id="loginBtn">Sign in</button>
+    <div id="loginStep1">
+      <div class="field"><label>Username</label><input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" /></div>
+      <div class="field"><label>Password</label><input id="p" type="password" autocomplete="current-password" /></div>
+      <button class="btn" id="loginBtn">Sign in</button>
+    </div>
+    <div id="loginStep2" style="display:none">
+      <div class="sub" style="margin:0 0 12px;text-align:center"><b>Two-step verification</b><br>Open your authenticator app and type the 6-digit code.</div>
+      <div class="field"><label>Code (or a recovery code)</label><input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="24" spellcheck="false" /></div>
+      <button class="btn" id="mfaBtn">Verify</button>
+      <button class="mini" id="mfaBack" style="margin-top:8px;width:100%">Back</button>
+    </div>
     <div class="err" id="loginErr"></div>
   </div>
 </div>
+
+<div id="secModal" role="dialog" aria-modal="true"><div class="sec-card"><h3 id="secTitle"></h3><div id="secBody"></div></div></div>
 
 <div id="app">
   <div class="topbar">
@@ -322,6 +353,7 @@
     <span id="demoBadge" style="display:none;font-family:var(--mono);font-size:11px;color:#fff;background:var(--warn);padding:2px 8px;border-radius:6px">DEMO MODE</span>
     <span class="spacer"></span>
     <span class="live"><span class="dot"></span><span id="clock">--:--:--</span></span>
+    <button class="iconbtn" id="acctBtn" title="My account: password, two-step verification">👤</button>
     <button class="iconbtn" id="themeBtn" title="Toggle theme">🌙</button>
     <button class="iconbtn" id="langBtn" title="Language">हिं</button>
     <button class="iconbtn" id="wallBtn" title="Wallboard / control-room mode">⛶</button>
@@ -475,8 +507,16 @@
 
       <div class="view-head"><h2 style="font-size:14px">Users &amp; Roles</h2><button class="mini" id="addUserBtn" style="margin-left:auto">+ Add user</button></div>
       <div class="panel" style="margin-bottom:18px"><table>
-        <thead><tr><th>Username</th><th>Role</th><th>Email</th><th>Mobile</th><th>Assigned EMUs</th><th>Assigned Coaches</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>2-step</th><th>Last sign-in</th><th>Email</th><th>Mobile</th><th>Assigned EMUs</th><th>Assigned Coaches</th><th>Actions</th></tr></thead>
         <tbody id="adminUsers"></tbody></table></div>
+
+      <div id="secPanel" style="display:none">
+        <div class="view-head"><h2 style="font-size:14px">Sign-in security events</h2><button class="mini" id="secRefresh" style="margin-left:auto">Refresh</button></div>
+        <div class="desc" style="margin:-4px 0 8px">Wrong passwords, lockouts, password changes, forced sign-outs. Repeated failures for one user or from one address are the sign of a guessing attack.</div>
+        <div class="panel" style="margin-bottom:18px;max-height:340px;overflow:auto"><table>
+          <thead><tr><th>Time</th><th>Event</th><th>User</th><th>Address</th><th>Details</th></tr></thead>
+          <tbody id="secEvents"></tbody></table></div>
+      </div>
 
       <div class="view-head"><h2 style="font-size:14px">EMUs</h2><button class="mini" id="addEmuBtn" style="margin-left:auto">+ Add EMU</button></div>
       <div class="panel" style="margin-bottom:18px"><table>
@@ -748,29 +788,59 @@
     opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json'},opts.headers||{},TOKEN?{Authorization:'Bearer '+TOKEN}:{});
     var r=await fetch('/api/v1'+path,opts);
     if(r.status===401&&TOKEN){doLogout();throw new Error('Session expired');}
-    if(!r.ok){var e=await r.json().catch(function(){return{};});throw new Error(e.error||('HTTP '+r.status));}
+    if(!r.ok){var e=await r.json().catch(function(){return{};});
+      if(r.status===403&&e.code==='PASSWORD_CHANGE_REQUIRED'&&USER)openPasswordModal({forced:true,onDone:function(){renderView();}});
+      throw new Error(e.error||('HTTP '+r.status));}
     return r.json();
   }
 
   $('#loginBtn').addEventListener('click',login);
   $('#p').addEventListener('keydown',function(e){if(e.key==='Enter')login();});
+  $('#mfaBtn').addEventListener('click',loginMfaStep);
+  $('#mfaCode').addEventListener('keydown',function(e){if(e.key==='Enter')loginMfaStep();});
+  $('#mfaBack').addEventListener('click',function(){loginReset();$('#p').focus();});
+  var MFA_TOKEN=null;
+  function loginError(m){$('#loginErr').textContent=m||'';}
+  function loginReset(){MFA_TOKEN=null;$('#loginStep1').style.display='';$('#loginStep2').style.display='none';$('#p').value='';$('#mfaCode').value='';loginError('');}
+  async function postLogin(url,body){
+    var res=await fetch('/api/v1'+url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var data=await res.json().catch(function(){return{};});
+    if(!res.ok)throw new Error(data.error||('Sign-in failed (HTTP '+res.status+')'));
+    return data;
+  }
   async function login(){
-    $('#loginErr').textContent='';
+    loginError('');$('#loginBtn').disabled=true;
     try{
-      var res=await fetch('/api/v1/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('#u').value.trim(),password:$('#p').value})});
-      if(!res.ok)throw new Error('Invalid credentials');
-      var data=await res.json();TOKEN=data.token;USER=data.user;
-      $('#login').style.display='none';$('#app').style.display='block';
-      $('#whoName').textContent=USER.username;$('#whoRole').textContent=ROLE_LABELS[USER.role]||USER.role;
-      var canAdmin=['super_admin','railway_hq'].indexOf(USER.role)>=0;
-      document.querySelector('.nav button[data-view="assets"]').style.display=canAdmin?'':'none';
-      document.querySelector('.nav button[data-view="notify"]').style.display=canAdmin?'':'none';
-      document.querySelector('.nav button[data-view="audit"]').style.display=canAdmin?'':'none';
-      document.querySelector('.nav button[data-view="topology"]').style.display=(USER.role==='super_admin')?'':'none';
-      bindAdminOnce();
-      fetch('/healthz').then(function(r){return r.json();}).then(function(h){$('#demoBadge').style.display=h.demo?'':'none';}).catch(function(){});
-      startClock();switchView('overview');startPolling();startIdleTimer();
-    }catch(err){$('#loginErr').textContent=err.message;}
+      var data=await postLogin('/login',{username:$('#u').value.trim(),password:$('#p').value});
+      if(data.mfa_required){MFA_TOKEN=data.mfa_token;$('#p').value='';$('#loginStep1').style.display='none';$('#loginStep2').style.display='';$('#mfaCode').value='';$('#mfaCode').focus();return;}
+      await afterLogin(data);
+    }catch(err){loginError(err.message);}
+    finally{$('#loginBtn').disabled=false;}
+  }
+  async function loginMfaStep(){
+    loginError('');$('#mfaBtn').disabled=true;
+    try{await afterLogin(await postLogin('/login/mfa',{mfa_token:MFA_TOKEN,code:$('#mfaCode').value}));}
+    catch(err){loginError(err.message);if(/expired|start again|sign in again|finish the sign-in/i.test(err.message)){$('#loginStep1').style.display='';$('#loginStep2').style.display='none';}}   // only a dead step sends the user back; "Wrong code ... try again" stays on this step
+    finally{$('#mfaBtn').disabled=false;}
+  }
+  async function afterLogin(data){
+    TOKEN=data.token;USER=data.user;MFA_TOKEN=null;$('#p').value='';$('#mfaCode').value='';
+    // a first-time / reset / default password must be replaced before anything else is shown
+    if(USER.must_change){openPasswordModal({forced:true,onDone:function(){if(USER.must_setup_2fa)open2faSetup({forced:true,onDone:enterApp});else enterApp();}});return;}
+    if(USER.must_setup_2fa){open2faSetup({forced:true,onDone:enterApp});return;}
+    enterApp();
+  }
+  function enterApp(){
+    $('#login').style.display='none';$('#app').style.display='block';
+    $('#whoName').textContent=USER.username;$('#whoRole').textContent=ROLE_LABELS[USER.role]||USER.role;
+    var canAdmin=['super_admin','railway_hq'].indexOf(USER.role)>=0;
+    document.querySelector('.nav button[data-view="assets"]').style.display=canAdmin?'':'none';
+    document.querySelector('.nav button[data-view="notify"]').style.display=canAdmin?'':'none';
+    document.querySelector('.nav button[data-view="audit"]').style.display=canAdmin?'':'none';
+    document.querySelector('.nav button[data-view="topology"]').style.display=(USER.role==='super_admin')?'':'none';
+    bindAdminOnce();
+    fetch('/healthz').then(function(r){return r.json();}).then(function(h){$('#demoBadge').style.display=h.demo?'':'none';}).catch(function(){});
+    startClock();switchView('overview');startPolling();startIdleTimer();
   }
   $('#logoutBtn').addEventListener('click',doLogout);
   $('#langBtn').addEventListener('click',toggleLang);
@@ -808,7 +878,13 @@
     var lo=$('#logoutBtn');if(lo)tr(lo);
   }
   function toggleLang(){LANG=(LANG==='en')?'hi':'en';applyLang();$('#langBtn').textContent=(LANG==='en')?'हिं':'EN';}
-  function doLogout(){TOKEN=null;USER=null;if(POLL)clearInterval(POLL);$('#app').style.display='none';$('#login').style.display='grid';$('#p').value='';}
+  function doLogout(){
+    var t=TOKEN;TOKEN=null;USER=null;
+    if(t){try{fetch('/api/v1/logout',{method:'POST',headers:{Authorization:'Bearer '+t}}).catch(function(){});}catch(e){}}   // the token dies on the server too
+    if(POLL)clearInterval(POLL);
+    if(typeof exitWall==='function'){try{exitWall();}catch(e){}}
+    $('#app').style.display='none';$('#login').style.display='grid';closeModal();loginReset();
+  }
 
   // mouse users: the vertical wheel scrolls the tab bar sideways when all 18 tabs do not fit (small laptops)
   $('#nav').addEventListener('wheel',function(e){
@@ -844,7 +920,11 @@
     if(IDLE_TIMER){clearTimeout(IDLE_TIMER);}
     if(!TOKEN)return;
     IDLE_WARN=setTimeout(function(){ if(TOKEN) alert('Session about to expire due to inactivity. Move the mouse or press a key to stay signed in.'); },(SESSION_IDLE_MIN-1)*60000);
-    IDLE_TIMER=setTimeout(function(){ if(TOKEN){ doLogout(); alert('Signed out due to '+SESSION_IDLE_MIN+' minutes of inactivity.'); } },SESSION_IDLE_MIN*60000);
+    IDLE_TIMER=setTimeout(function(){
+      if(!TOKEN)return;
+      if($('#wallboard')&&$('#wallboard').style.display==='block'){resetIdle();return;}   // a wall display is meant to run unattended
+      doLogout();alert('Signed out due to '+SESSION_IDLE_MIN+' minutes of inactivity.');
+    },SESSION_IDLE_MIN*60000);
   }
   function startIdleTimer(){
     ['mousemove','keydown','click','scroll','touchstart'].forEach(function(ev){document.addEventListener(ev,resetIdle,{passive:true});});
@@ -1368,17 +1448,33 @@
     $('#thDbLog').value=th.CFG_DB_LOG_INTERVAL!=null?th.CFG_DB_LOG_INTERVAL:600;
     ['thWarn','thHigh','thCrit','thOff','thBat','thRise','thLog','thDbLog'].forEach(function(id){$('#'+id).disabled=ro;});
     // users
+    loadSecEvents();
     var users=await api('/users');var tu=$('#adminUsers');tu.innerHTML='';
     var GLOBAL_ROLES=['super_admin','railway_hq'];
     users.forEach(function(u){
       var isGlobal=GLOBAL_ROLES.indexOf(u.role)>=0;
       var emuCell=isGlobal?'ALL (auto)':((u.emus||[]).join(', ')||'—');
       var coachCell=isGlobal?'ALL (auto)':((u.coaches||[]).join(', ')||'—');
-      var tr=el('tr');[u.username,ROLE_LABELS[u.role]||u.role,u.email||'—',u.phone||'—',emuCell,coachCell].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var tr=el('tr');
+      [u.username,ROLE_LABELS[u.role]||u.role].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var stc=el('td');
+      if(u.disabled)stc.appendChild(el('span','badge bad','Disabled'));
+      else if(u.locked_min>0)stc.appendChild(el('span','badge warn','Locked '+u.locked_min+' min'));
+      else stc.appendChild(el('span','badge ok','Active'));
+      if(u.must_change)stc.appendChild(el('span','badge warn','Must change password'));
+      tr.appendChild(stc);
+      var tc=el('td');tc.appendChild(el('span','badge '+(u.totp_enabled?'ok':'warn'),u.totp_enabled?'ON':'OFF'));tr.appendChild(tc);
+      tr.appendChild(el('td',null,u.last_login?fmtIST(u.last_login):'never'));
+      [u.email||'—',u.phone||'—',emuCell,coachCell].forEach(function(v){tr.appendChild(el('td',null,v));});
       var ac=el('td');
       if(!ro){
         if(!isGlobal)ac.appendChild(mkBtn('Assets',function(){assignAssets(u);}));
         ac.appendChild(mkBtn('Edit',function(){editUser(u);}));
+        ac.appendChild(mkBtn('Reset password',function(){resetUserPassword(u);}));
+        if(u.locked_min>0)ac.appendChild(mkBtn('Unlock',function(){userAction(u,'unlock');}));
+        if(u.username!==USER.username)ac.appendChild(mkBtn(u.disabled?'Enable':'Disable',function(){userAction(u,u.disabled?'enable':'disable',u.disabled?null:'Disable '+u.username+'? They are signed out at once and cannot sign in.');}));
+        ac.appendChild(mkBtn('Sign out',function(){userAction(u,'logout','Sign '+u.username+' out on every device?');}));
+        if(u.totp_enabled)ac.appendChild(mkBtn('Reset 2-step',function(){userAction(u,'2fa-reset','Remove two-step verification for '+u.username+'? They must set it up again.');}));
         ac.appendChild(mkBtn('Delete',function(){delUser(u);}));
       } else ac.textContent='—';
       tr.appendChild(ac);tu.appendChild(tr);
@@ -1504,9 +1600,139 @@
     try{await api('/thresholds',{method:'PUT',body:JSON.stringify(body)});THRESH_CACHE=null;$('#thSave').textContent='Saved ✓';setTimeout(function(){$('#thSave').textContent='Save thresholds';},1500);}
     catch(e){alert(e.message);}
   }
+  // ===================== Account security screens =====================
+  var MODAL_FORCED=false;
+  function openModal(title,build,opts){
+    opts=opts||{};MODAL_FORCED=!!opts.forced;$('#secTitle').textContent=title;
+    var body=$('#secBody');body.innerHTML='';build(body);$('#secModal').style.display='grid';
+    var f=body.querySelector('input');if(f)setTimeout(function(){try{f.focus();}catch(e){}},50);
+  }
+  function closeModal(){$('#secModal').style.display='none';$('#secBody').innerHTML='';MODAL_FORCED=false;}
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&$('#secModal').style.display==='grid'&&!MODAL_FORCED)closeModal();});
+  function fieldRow(label,type,ac){var d=el('div','field');d.appendChild(el('label',null,label));var i=el('input');i.type=type||'text';if(ac)i.autocomplete=ac;i.spellcheck=false;d.appendChild(i);return{wrap:d,input:i};}
+  function btnRow(){return el('div','row2');}
+  function fmtIST(iso){return iso?new Date(iso).toLocaleString('en-GB',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})+' IST':'—';}
+
+  function openPasswordModal(o){
+    o=o||{};
+    openModal(o.forced?'Set a new password':'Change password',function(body){
+      body.appendChild(el('div','sub',o.forced?'For your security you must choose your own password before you can use the dashboard.':'Changing the password signs you out on every other device.'));
+      var cur=fieldRow('Current password','password','current-password'),n1=fieldRow('New password','password','new-password'),n2=fieldRow('Repeat new password','password','new-password');
+      [cur,n1,n2].forEach(function(f){body.appendChild(f.wrap);});
+      var ul=el('ul','rules');['At least 10 characters.','Use 3 of: small letters, CAPITAL letters, digits, symbols (or a passphrase of 16+ characters).','Do not use your username, "password", "admin", "himnish", or 1234 / abcd.'].forEach(function(t){ul.appendChild(el('li',null,t));});
+      body.appendChild(ul);
+      var err=el('div','err'),row=btnRow(),save=el('button','btn','Save password');row.appendChild(save);
+      if(!o.forced){var c=el('button','mini','Cancel');c.onclick=closeModal;row.appendChild(c);}
+      body.appendChild(row);body.appendChild(err);
+      function go(){
+        err.textContent='';
+        if(n1.input.value!==n2.input.value){err.textContent='The two new passwords are not the same.';return;}
+        save.disabled=true;
+        api('/me/password',{method:'POST',body:JSON.stringify({current:cur.input.value,next:n1.input.value})}).then(function(r){
+          TOKEN=r.token;USER=r.user;closeModal();
+          if(o.onDone)o.onDone();else alert('Password changed. Every other device was signed out.');
+        }).catch(function(e){err.textContent=e.message;}).then(function(){save.disabled=false;});
+      }
+      save.onclick=go;n2.input.addEventListener('keydown',function(e){if(e.key==='Enter')go();});
+    },{forced:o.forced});
+  }
+
+  async function openAccount(){
+    var me;try{me=await api('/me');}catch(e){alert(e.message);return;}
+    openModal('My account',function(body){
+      var kv=el('div','sec-kv');
+      [['User',me.username],['Role',ROLE_LABELS[me.role]||me.role],['Previous sign-in',USER&&USER.last_login?fmtIST(USER.last_login)+(USER.last_login_ip?' · '+USER.last_login_ip:''):'this is your first sign-in'],['Password changed',fmtIST(me.pw_changed_at)]].forEach(function(r){kv.appendChild(el('b',null,r[0]));kv.appendChild(el('span',null,r[1]));});
+      body.appendChild(kv);
+      var t=el('div');t.style.margin='4px 0 6px';t.appendChild(el('b',null,'Two-step verification  '));
+      var bd=el('span','badge '+(me.totp_enabled?'ok':'warn'),me.totp_enabled?'ON':'OFF');t.appendChild(bd);body.appendChild(t);
+      body.appendChild(el('div','sub',me.totp_enabled?('Sign-in also needs a code from your authenticator app. Recovery codes left: '+me.recovery_codes_left+'.'):'Adds a 6-digit code from your phone on top of the password. Strongly recommended for every admin.'));
+      var row=btnRow();
+      var bp=el('button','btn','Change password');bp.onclick=function(){openPasswordModal({});};row.appendChild(bp);
+      var b2=el('button','mini',me.totp_enabled?'Turn off 2-step':'Turn on 2-step');b2.onclick=function(){if(me.totp_enabled)open2faDisable();else open2faSetup({});};row.appendChild(b2);
+      body.appendChild(row);
+      var row2=btnRow();
+      var bo=el('button','mini','Sign out on all devices');bo.onclick=function(){if(!confirm('Sign out everywhere, including this device?'))return;api('/me/logout-all',{method:'POST'}).then(function(){doLogout();}).catch(function(e){alert(e.message);});};row2.appendChild(bo);
+      var bc=el('button','mini','Close');bc.onclick=closeModal;row2.appendChild(bc);body.appendChild(row2);
+    });
+  }
+
+  async function open2faSetup(o){
+    o=o||{};var st;
+    try{st=await api('/me/2fa/setup',{method:'POST'});}catch(e){alert(e.message);return;}
+    openModal('Turn on two-step verification',function(body){
+      var ol=el('ol','rules');ol.style.marginLeft='20px';
+      ['Install "Google Authenticator" or "Microsoft Authenticator" on your phone.','In the app choose "Add account" -> "Enter a setup key" and type the key below (name: '+st.account+', type: time-based).','Type the 6-digit code the app shows.'].forEach(function(t){ol.appendChild(el('li',null,t));});
+      body.appendChild(ol);
+      body.appendChild(el('div','secret',st.secret.match(/.{1,4}/g).join(' ')));
+      var a=el('a',null,'On this phone? Tap here to add it automatically');a.href=st.otpauth_uri;a.style.cssText='display:block;text-align:center;font-size:12.5px;margin-bottom:8px';body.appendChild(a);
+      var code=fieldRow('6-digit code','text','one-time-code');code.input.inputMode='numeric';code.input.maxLength=7;body.appendChild(code.wrap);
+      var err=el('div','err'),row=btnRow(),go=el('button','btn','Turn on');row.appendChild(go);
+      if(!o.forced){var c=el('button','mini','Cancel');c.onclick=closeModal;row.appendChild(c);}
+      body.appendChild(row);body.appendChild(err);
+      function run(){
+        err.textContent='';go.disabled=true;
+        api('/me/2fa/enable',{method:'POST',body:JSON.stringify({code:code.input.value})}).then(function(r){
+          TOKEN=r.token;USER=r.user;showRecoveryCodes(r.recovery_codes,o);
+        }).catch(function(e){err.textContent=e.message;}).then(function(){go.disabled=false;});
+      }
+      go.onclick=run;code.input.addEventListener('keydown',function(e){if(e.key==='Enter')run();});
+    },{forced:o.forced});
+  }
+  function showRecoveryCodes(codes,o){
+    openModal('Save your recovery codes',function(body){
+      body.appendChild(el('div','sub','If you lose your phone, each of these 8 codes can be typed instead of the 6-digit code, ONE time. Write them down or print them and keep them safe. They are not shown again.'));
+      var pre=el('pre','codes',codes.join('\n'));body.appendChild(pre);
+      var row=btnRow(),ok=el('button','btn','I have saved them');ok.onclick=function(){closeModal();if(o&&o.onDone)o.onDone();};row.appendChild(ok);body.appendChild(row);
+    },{forced:true});
+  }
+  function open2faDisable(){
+    openModal('Turn off two-step verification',function(body){
+      body.appendChild(el('div','sub','Your password and a current 6-digit code are needed.'));
+      var pw=fieldRow('Password','password','current-password'),code=fieldRow('6-digit code','text','one-time-code');code.input.inputMode='numeric';code.input.maxLength=7;
+      body.appendChild(pw.wrap);body.appendChild(code.wrap);
+      var err=el('div','err'),row=btnRow(),go=el('button','btn','Turn off'),c=el('button','mini','Cancel');c.onclick=closeModal;row.appendChild(go);row.appendChild(c);body.appendChild(row);body.appendChild(err);
+      go.onclick=function(){err.textContent='';go.disabled=true;
+        api('/me/2fa/disable',{method:'POST',body:JSON.stringify({password:pw.input.value,code:code.input.value})}).then(function(r){TOKEN=r.token;USER=r.user;closeModal();alert('Two-step verification is off.');}).catch(function(e){err.textContent=e.message;}).then(function(){go.disabled=false;});};
+    });
+  }
+  $('#acctBtn').addEventListener('click',openAccount);
+
+  function userAction(u,action,confirmText){
+    if(confirmText&&!confirm(confirmText))return;
+    api('/users/'+encodeURIComponent(u.username)+'/'+action,{method:'POST'}).then(function(){renderAdmin();}).catch(function(e){alert(e.message);});
+  }
+  function resetUserPassword(u){
+    if(!confirm('Reset the password of '+u.username+'? A temporary password is created, they are signed out everywhere, and must choose a new password at the next sign-in.'))return;
+    api('/users/'+encodeURIComponent(u.username)+'/reset-password',{method:'POST'}).then(function(r){
+      renderAdmin();
+      openModal('Temporary password for '+u.username,function(body){
+        body.appendChild(el('div','sub','Give this to '+u.username+' privately (phone / in person, not by group chat). It is shown only ONCE. At the first sign-in they must choose their own password.'));
+        body.appendChild(el('div','secret',r.temp_password));
+        var row=btnRow(),ok=el('button','btn','Done');ok.onclick=closeModal;row.appendChild(ok);body.appendChild(row);
+      });
+    }).catch(function(e){alert(e.message);});
+  }
+  var SEC_LABEL={login:'Signed in',login_failed:'Wrong password / code',account_locked:'Account LOCKED',account_unlocked:'Unlocked',logout:'Signed out',logout_all:'Signed out everywhere',forced_logout:'Forced sign-out',password_changed:'Password changed',password_reset:'Password reset',account_disabled:'Disabled',account_enabled:'Enabled','2fa_enabled':'2-step ON','2fa_disabled':'2-step OFF','2fa_reset':'2-step reset',recovery_code_used:'Recovery code used',login_refused:'Sign-in refused'};
+  async function loadSecEvents(){
+    var panel=$('#secPanel');
+    if(!USER||USER.role!=='super_admin'){panel.style.display='none';return;}
+    panel.style.display='';
+    var ev=[];try{ev=await api('/security/events?limit=100');}catch(e){return;}
+    var tb=$('#secEvents');tb.innerHTML='';
+    if(!ev.length){var tr0=el('tr');var td0=el('td',null,'No events yet.');td0.colSpan=5;tr0.appendChild(td0);tb.appendChild(tr0);return;}
+    ev.forEach(function(e){
+      var tr=el('tr');tr.appendChild(el('td',null,fmtIST(e.at)));
+      var bad=/failed|locked|refused/.test(e.type),warn=/reset|disabled|forced|recovery/.test(e.type);
+      var tdt=el('td');tdt.appendChild(el('span','badge '+(bad?'bad':(warn?'warn':'ok')),SEC_LABEL[e.type]||e.type));tr.appendChild(tdt);
+      [e.user||'—',e.ip||'—',e.detail||''].forEach(function(v){tr.appendChild(el('td',null,v));});
+      tb.appendChild(tr);
+    });
+  }
+  $('#secRefresh').addEventListener('click',loadSecEvents);
+
   function addUser(){
     var username=prompt('New username:');if(!username)return;
-    var password=prompt('Password for '+username+' (min 8 chars):');if(!password)return;
+    var password=prompt('Temporary password for '+username+'\n(min 10 characters, 3 of: a-z A-Z 0-9 symbol). The user must change it at the first sign-in:');if(!password)return;
     var role=prompt('Role: super_admin / railway_hq / depot_admin / maintenance_eng / observer','maintenance_eng');if(!role)return;
     var depot=prompt('Depot id (optional):','');
     var email=prompt('Email (for reports & alerts):','');
@@ -1518,7 +1744,7 @@
     var depot=prompt('Depot id (blank for none):',u.depot_id||'');
     var email=prompt('Email (for reports & alerts):',u.email||'');
     var phone=prompt('Mobile (for SMS alerts):',u.phone||'');
-    var pw=prompt('New password (blank = keep current):','');
+    var pw=prompt('Set a NEW temporary password? (blank = keep current). Tip: use the "Reset password" button instead, it makes a strong one for you.','');
     var body={role:role,depot_id:depot,email:email,phone:phone};if(pw)body.password=pw;
     adminCall('/users/'+encodeURIComponent(u.username),'PUT',body);
   }

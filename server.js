@@ -1,12 +1,16 @@
 'use strict';
+// More worker threads for password hashing / file / DNS work (must be set before the first use of the pool).
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '8';
 require('dotenv').config(); // load .env (DATABASE_URL, JWT_SECRET, SMTP, SMS ...) before config.js reads process.env
 
 const path = require('path');
 const express = require('express');
+const compression = require('compression');
 
 const config = require('./src/config');
 const { Store } = require('./src/store');
-const { seedDefaults, login } = require('./src/auth');
+const auth = require('./src/auth');
+const { seedDefaults, login, loginMfa, loginGate } = auth;
 const { ingestRouter } = require('./src/ingest');
 const { apiRouter } = require('./src/api');
 const { startPoller } = require('./src/poller');
@@ -31,7 +35,7 @@ async function bootstrap() {
   }
   await store.load();               // restore master data (DB preferred, else JSON)
   if (store.db) await store.backfillFromDb(config.BACKFILL_HOURS); // restore live + trends
-  seedDefaults(store);              // ensure a super admin exists (before demo seeding)
+  await seedDefaults(store);        // ensure a super admin exists (before demo seeding); flags accounts still on the default password
 
   setInterval(() => store.sweepOffline(), 30000);
   setInterval(() => {
@@ -80,15 +84,46 @@ async function bootstrap() {
   }, 60 * 1000);
 }
 
+// gzip JSON/HTML/JS: the fleet view is ~1.8 MB of JSON at 2000 coaches (about 12x smaller compressed).
+app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: '256kb' }));
 
 // --- Security headers (production hardening) ---
+// Content-Security-Policy: the page's own inline <script> is allowed by its SHA-256 hash (recomputed whenever the file
+// changes), so injected script from anywhere else cannot run even if some text were ever not escaped.
+const crypto = require('crypto');
+const fs = require('fs');
+const cspState = { key: '', value: '' };
+function inlineScriptHashes(file) {
+  try {
+    const html = fs.readFileSync(file, 'utf8'); const out = [];
+    html.replace(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/gi, (m, body) => { if (body.trim()) out.push("'sha256-" + crypto.createHash('sha256').update(body, 'utf8').digest('base64') + "'"); return m; });
+    return out;
+  } catch (e) { return []; }
+}
+function cspHeader() {
+  const files = ['index.html', 'docs.html'].map((f) => path.join(__dirname, 'public', f));
+  const key = files.map((f) => { try { return fs.statSync(f).mtimeMs; } catch (e) { return 0; } }).join('|');
+  if (key !== cspState.key) {
+    const hashes = [].concat(...files.map(inlineScriptHashes)).join(' ');
+    cspState.key = key;
+    cspState.value = ["default-src 'self'", `script-src 'self' ${hashes} https://cdnjs.cloudflare.com`,
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com", "font-src 'self' https://fonts.gstatic.com data:",
+      "img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org https://cdnjs.cloudflare.com",
+      "connect-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'self'"].join('; ');
+  }
+  return cspState.value;
+}
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-XSS-Protection', '0');
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('Content-Security-Policy', cspHeader());
+  res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=(), payment=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');   // never keep account or fleet data in a shared PC's cache
   next();
 });
 
@@ -120,8 +155,9 @@ function rateLimit({ windowMs, max }) {
 }
 // Brute-force protection on login; generous global cap that never hits normal
 // dashboard polling or per-RUT hardware posting (each RUT is a distinct IP).
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 40 });
-const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 600 });
+// Per office IP. A control room with many people behind ONE public IP (NAT) shares this budget; each open
+// dashboard tab makes roughly 30-60 calls/min. Set API_RATE_MAX in .env to change it.
+const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: Number(process.env.API_RATE_MAX) || 3000 });
 
 // Clean JSON error for malformed request bodies (e.g. a garbled hardware POST)
 // instead of crashing or returning an HTML error page.
@@ -133,11 +169,17 @@ app.use((err, req, res, next) => {
   next();
 });
 
-app.post('/api/v1/login', loginLimiter, (req, res) => {
+// Sign-in. Only FAILED attempts count against an address (loginGate) and against an account (lockout in auth.js),
+// so a whole office behind one public IP can sign in every morning, while guessing is stopped.
+app.post('/api/v1/login', loginGate, async (req, res) => {
   const { username, password } = req.body || {};
-  const result = login(store, username || '', password || '');
-  if (!result) return res.status(401).json({ error: 'Invalid credentials' });
-  res.json(result);
+  try { const r = await login(store, username, password, req); res.status(r.status).json(r.body); }
+  catch (e) { console.error('[auth] login error:', e.message); res.status(500).json({ error: 'Sign-in failed. Please try again.' }); }
+});
+app.post('/api/v1/login/mfa', loginGate, async (req, res) => {
+  const { mfa_token, code } = req.body || {};
+  try { const r = await loginMfa(store, mfa_token, code, req); res.status(r.status).json(r.body); }
+  catch (e) { console.error('[auth] mfa error:', e.message); res.status(500).json({ error: 'Sign-in failed. Please try again.' }); }
 });
 
 // --- Field-device relay (opt-in via RELAY_TARGET env var) ------------------
@@ -217,10 +259,6 @@ bootstrap().then(() => {
     console.log(`EMU Motor Coach TM Monitoring on :${config.PORT}`);
     console.log(`DEMO_MODE=${config.DEMO_MODE}  DATA_DIR=${config.DATA_DIR}  DB=${store.db ? 'PostgreSQL' : 'JSON+memory'}`);
     console.log(`thresholds: warn>${t.CFG_WARN_TEMP} high>${t.CFG_HIGH_TEMP} crit>${t.CFG_CRIT_TEMP}`);
-    // (checked after the store has loaded so the real admin account is visible)
-    try {
-      const au = store.getUser('admin');
-      if (au && require('bcryptjs').compareSync('himnish@2025', au.hash)) console.warn('[SECURITY] admin password is still the default (himnish@2025) — change it in Admin → Users!');
-    } catch (e) {}
+
   });
 }).catch((e) => { console.error('[server] bootstrap error:', e); process.exit(1); });

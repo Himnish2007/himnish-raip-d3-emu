@@ -2,12 +2,16 @@
 
 const express = require('express');
 const config = require('./config');
-const { requireAuth, requireRole } = require('./auth');
+const auth = require('./auth');
+const { requireAuth, requireRole } = auth;
+const { accountRouter } = require('./account');
 const reports = require('./reports');
 
 function apiRouter(store, notifier) {
   const router = express.Router();
+  auth.setStore(store);
   router.use(requireAuth);
+  router.use(accountRouter(store));      // /me, /logout, 2FA, admin user controls
 
   const ADMIN = config.ADMIN_ROLES;            // super_admin
   const GLOBAL = config.GLOBAL_ROLES;          // super_admin, railway_hq
@@ -257,10 +261,10 @@ function apiRouter(store, notifier) {
   });
 
   // Users
-  router.get('/users', requireRole(...GLOBAL), (req, res) => res.json(store.listUsers()));
-  router.post('/users', admin, (req, res) => { try { res.json(store.createUser(req.body || {}, req.user.sub)); }
+  router.get('/users', requireRole(...GLOBAL), (req, res) => res.json(store.listUsers().map((u) => Object.assign(u, { locked_min: Math.ceil(auth.lockInfo(u.username) / 60000) }))));
+  router.post('/users', admin, async (req, res) => { try { res.json(await store.createUser(req.body || {}, req.user.sub)); }
     catch (e) { res.status(400).json({ error: e.message }); } });
-  router.put('/users/:username', admin, (req, res) => { try { res.json(store.updateUser(req.params.username, req.body || {}, req.user.sub)); }
+  router.put('/users/:username', admin, async (req, res) => { try { res.json(await store.updateUser(req.params.username, req.body || {}, req.user.sub)); }
     catch (e) { res.status(400).json({ error: e.message }); } });
   router.delete('/users/:username', admin, (req, res) => { try { store.deleteUser(req.params.username, req.user.sub); res.json({ ok: true }); }
     catch (e) { res.status(400).json({ error: e.message }); } });

@@ -34,7 +34,7 @@ const config = {
   RETENTION_DAYS: num('RETENTION_DAYS', 0),
 
   JWT_SECRET: process.env.JWT_SECRET || 'himnish-raip-d3-dev-secret-change-me',
-  JWT_TTL: process.env.JWT_TTL || '12h',
+  JWT_TTL: process.env.JWT_TTL || '8h',
 
   // Ingestion key used by every Himnish LTE module / RUT200 push.
   DATA_API_KEY: process.env.DATA_API_KEY || 'himnish_emu_key_2025',
