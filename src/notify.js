@@ -150,6 +150,13 @@ function createNotifier() {
     // SMS costs money and a sensor that stays hot re-raises its alert every minute: send the same
     // recipient / coach / severity again only after SMS_REPEAT_MIN minutes (0 = always send).
     const smsLast = dispatchForAlert.smsLast || (dispatchForAlert.smsLast = new Map());
+    // Forget entries older than the repeat window: without this the map grows for as long as the
+    // server runs (every distinct severity+coach+number combo ever alerted stays in memory forever).
+    if (!dispatchForAlert._smsGcAt || Date.now() - dispatchForAlert._smsGcAt > 3600000) {
+      dispatchForAlert._smsGcAt = Date.now();
+      const maxAge = Math.max((Number(config.SMS_REPEAT_MIN) || 0) * 60000, 3600000) * 2;
+      for (const [k, t] of smsLast) if (Date.now() - t > maxAge) smsLast.delete(k);
+    }
     const smsSend = async (to) => {
       const every = (Number(config.SMS_REPEAT_MIN) || 0) * 60000;
       const key = `${alert.severity}|${alert.coach_id || alert.sensor_id}|${to}`;

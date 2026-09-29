@@ -84,6 +84,7 @@ function accountRouter(store) {
 
   r.post('/users/:username/reset-password', ADMIN, async (req, res) => {
     const u = target(req, res); if (!u) return;
+    if (u.username === req.user.sub) return fail(res, 400, 'Use "Change password" (person icon) for your own account.');
     const temp = pw.randomPassword();
     u.hash = await pw.hash(temp); u.must_change = true; u.pw_changed_at = iso(); auth.revokeAll(u); auth.unlock(u.username);
     store.logAudit({ user: req.user.sub, action: 'reset_password', detail: u.username }); auth.sec('password_reset', u.username, req, 'by ' + req.user.sub);
@@ -111,11 +112,13 @@ function accountRouter(store) {
   });
   r.post('/users/:username/logout', ADMIN, (req, res) => {
     const u = target(req, res); if (!u) return;
+    if (u.username === req.user.sub) return fail(res, 400, 'Use "Sign out" (person icon) for your own account.');
     auth.revokeAll(u); store.logAudit({ user: req.user.sub, action: 'force_logout', detail: u.username }); auth.sec('forced_logout', u.username, req, 'by ' + req.user.sub);
     store._persist(); res.json({ ok: true });
   });
   r.post('/users/:username/2fa-reset', ADMIN, (req, res) => {
     const u = target(req, res); if (!u) return;
+    if (u.username === req.user.sub) return fail(res, 400, 'Use "Turn off 2-step" (person icon) for your own account.');
     delete u.totp; delete u.totp_pending; auth.revokeAll(u);
     store.logAudit({ user: req.user.sub, action: '2fa_reset', detail: u.username }); auth.sec('2fa_reset', u.username, req, 'by ' + req.user.sub);
     store._persist(); res.json({ ok: true });

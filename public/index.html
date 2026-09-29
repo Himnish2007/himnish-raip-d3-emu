@@ -919,10 +919,13 @@
     if(IDLE_WARN){clearTimeout(IDLE_WARN);IDLE_WARN=null;}
     if(IDLE_TIMER){clearTimeout(IDLE_TIMER);}
     if(!TOKEN)return;
-    IDLE_WARN=setTimeout(function(){ if(TOKEN) alert('Session about to expire due to inactivity. Move the mouse or press a key to stay signed in.'); },(SESSION_IDLE_MIN-1)*60000);
+    // A wall display is meant to run unattended: no one is there to dismiss a blocking alert(), which would
+    // otherwise freeze the whole wallboard (setInterval callbacks pause behind a JS alert) until someone did.
+    function isWall(){return $('#wallboard')&&$('#wallboard').style.display==='block';}
+    IDLE_WARN=setTimeout(function(){ if(TOKEN&&!isWall()) alert('Session about to expire due to inactivity. Move the mouse or press a key to stay signed in.'); },(SESSION_IDLE_MIN-1)*60000);
     IDLE_TIMER=setTimeout(function(){
       if(!TOKEN)return;
-      if($('#wallboard')&&$('#wallboard').style.display==='block'){resetIdle();return;}   // a wall display is meant to run unattended
+      if(isWall()){resetIdle();return;}
       doLogout();alert('Signed out due to '+SESSION_IDLE_MIN+' minutes of inactivity.');
     },SESSION_IDLE_MIN*60000);
   }
@@ -1470,11 +1473,15 @@
       if(!ro){
         if(!isGlobal)ac.appendChild(mkBtn('Assets',function(){assignAssets(u);}));
         ac.appendChild(mkBtn('Edit',function(){editUser(u);}));
-        ac.appendChild(mkBtn('Reset password',function(){resetUserPassword(u);}));
+        var isSelf=u.username===USER.username;
+        // Reset password / Sign out / Reset 2-step all end the CURRENT session too when used on your own
+        // account (the server revokes every session for that user, including the one making the call).
+        // Use the person icon -> "Change password" / "Turn on 2-step" / "Sign out" for your own account instead.
+        if(!isSelf)ac.appendChild(mkBtn('Reset password',function(){resetUserPassword(u);}));
         if(u.locked_min>0)ac.appendChild(mkBtn('Unlock',function(){userAction(u,'unlock');}));
-        if(u.username!==USER.username)ac.appendChild(mkBtn(u.disabled?'Enable':'Disable',function(){userAction(u,u.disabled?'enable':'disable',u.disabled?null:'Disable '+u.username+'? They are signed out at once and cannot sign in.');}));
-        ac.appendChild(mkBtn('Sign out',function(){userAction(u,'logout','Sign '+u.username+' out on every device?');}));
-        if(u.totp_enabled)ac.appendChild(mkBtn('Reset 2-step',function(){userAction(u,'2fa-reset','Remove two-step verification for '+u.username+'? They must set it up again.');}));
+        if(!isSelf)ac.appendChild(mkBtn(u.disabled?'Enable':'Disable',function(){userAction(u,u.disabled?'enable':'disable',u.disabled?null:'Disable '+u.username+'? They are signed out at once and cannot sign in.');}));
+        if(!isSelf)ac.appendChild(mkBtn('Sign out',function(){userAction(u,'logout','Sign '+u.username+' out on every device?');}));
+        if(u.totp_enabled&&!isSelf)ac.appendChild(mkBtn('Reset 2-step',function(){userAction(u,'2fa-reset','Remove two-step verification for '+u.username+'? They must set it up again.');}));
         ac.appendChild(mkBtn('Delete',function(){delUser(u);}));
       } else ac.textContent='—';
       tr.appendChild(ac);tu.appendChild(tr);
