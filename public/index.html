@@ -913,7 +913,7 @@
   function startClock(){setInterval(function(){$('#clock').textContent=new Date().toLocaleTimeString('en-GB');},1000);}
 
   // Session auto-logout after inactivity (tender security). Warns 1 min before.
-  var SESSION_IDLE_MIN=30,IDLE_TIMER=null,IDLE_WARN=null,IDLE_LAST=Date.now();
+  var SESSION_IDLE_MIN=1440,IDLE_TIMER=null,IDLE_WARN=null,IDLE_LAST=Date.now();
   function resetIdle(){
     IDLE_LAST=Date.now();
     if(IDLE_WARN){clearTimeout(IDLE_WARN);IDLE_WARN=null;}
