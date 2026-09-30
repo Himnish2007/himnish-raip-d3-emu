@@ -24,16 +24,20 @@ const MAX_SERIES = 2000;
 
 // Default fully-configurable alert routing (admin edits at runtime, persisted).
 function defaultAlertConfig() {
-  const blank = (channels, esc, after) => ({ channels, emails: [], phones: [],
-    escalate_to: esc || '', escalate_after_min: after || 0 });
+  // "escalation" is an ORDERED chain through all 4 levels: L1 fires first (if still unacknowledged),
+  // then L2 later, then L3, then L4 — each independently timed (minutes since the alert was raised).
+  // A level with after_min 0 is skipped for that severity. Escalation stops the moment someone
+  // acknowledges the alert (state leaves 'active'), at whatever level it had reached.
+  const rule = (channels, chain) => ({ channels, emails: [], phones: [], escalation: chain || [] });
+  const step = (tier, after_min) => ({ tier, after_min });
   return {
     rules: {
-      warning: blank(['email'], 'L2', 30),
-      high: blank(['email', 'sms'], 'L3', 15),
-      critical: blank(['email', 'sms'], 'L4', 5),
-      offline: blank(['email'], '', 0),
-      low_battery: blank(['email'], '', 0),
-      rapid_rise: blank(['email', 'sms'], 'L3', 5),
+      warning: rule(['email'], [step('L2', 30)]),
+      high: rule(['email', 'sms'], [step('L1', 15), step('L2', 30), step('L3', 60)]),
+      critical: rule(['email', 'sms'], [step('L1', 5), step('L2', 15), step('L3', 30), step('L4', 60)]),
+      offline: rule(['email'], []),
+      low_battery: rule(['email'], []),
+      rapid_rise: rule(['email', 'sms'], [step('L1', 5), step('L2', 15), step('L3', 30)]),
     },
     // "role" (optional) scopes escalation to people ASSIGNED to the alert's own coach/EMU who hold
     // that role — not the whole fleet. "emails"/"phones" are ADDITIONAL fixed recipients who see
@@ -262,7 +266,7 @@ class Store {
     const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
     if (patch.rules) for (const sev of Object.keys(patch.rules)) {
       if (unsafeKey(sev)) continue;
-      if (!own(this.alertConfig.rules, sev)) this.alertConfig.rules[sev] = { channels: [], emails: [], phones: [], escalate_to: '', escalate_after_min: 0 };
+      if (!own(this.alertConfig.rules, sev)) this.alertConfig.rules[sev] = { channels: [], emails: [], phones: [], escalation: [] };
       Object.assign(this.alertConfig.rules[sev], patch.rules[sev]);
     }
     if (patch.escalation_tiers) for (const k of Object.keys(patch.escalation_tiers)) {
@@ -577,23 +581,34 @@ class Store {
 
   // Returns alerts whose escalation delay has elapsed without acknowledgement,
   // marking them escalated. Server sends to the configured tier.
+  // Backward-compatible reader: a rule saved before this change has escalate_to/escalate_after_min
+  // instead of an "escalation" array. Read either shape the same way — nothing already configured by
+  // an admin silently stops escalating after this upgrade.
+  static escalationChainFor(rule) {
+    if (!rule) return [];
+    if (Array.isArray(rule.escalation)) return rule.escalation.filter((s) => s && s.tier && s.after_min);
+    if (rule.escalate_to && rule.escalate_after_min) return [{ tier: rule.escalate_to, after_min: rule.escalate_after_min }];
+    return [];
+  }
   dueEscalations() {
     const out = [];
     const now = Date.now();
     for (const a of this.alerts) {
-      if (a.state !== 'active' || a.escalated) continue;
-      // A depot with its OWN escalation policy uses ITS rule (own escalate_to / escalate_after_min /
-      // tier definitions) instead of the fleet-wide one — so Depot A can escalate critical alerts
-      // after 5 min to its own engineer while Depot B waits 15 min and goes to a different person,
-      // entirely independently. A coach whose depot has no override (or has no depot at all) keeps
-      // using the fleet-wide alertConfig exactly as before.
+      if (a.state !== 'active') continue;
+      // An alert saved by the OLD single-tier system (before this change) has `escalated: true/false`
+      // and no per-level history — treat it as already fully escalated once, so upgrading never causes
+      // every old open alert to suddenly fire all 4 levels at once.
+      if (!Array.isArray(a.escalated_levels)) a.escalated_levels = a.escalated ? ['L1', 'L2', 'L3', 'L4'] : [];
       const depotId = a.coach_id ? this.depotOfCoach(a.coach_id) : null;
       const depotCfg = this.getDepotEscalation(depotId);
       const rule = (depotCfg && depotCfg.rules[a.severity]) || this.alertConfig.rules[a.severity];
-      if (!rule || !rule.escalate_to || !rule.escalate_after_min) continue;
-      if (now - Date.parse(a.at) >= rule.escalate_after_min * 60000) {
-        a.escalated = true;
-        const tierDef = (depotCfg && depotCfg.escalation_tiers[rule.escalate_to]) || this.alertConfig.escalation_tiers[rule.escalate_to];
+      const chain = Store.escalationChainFor(rule);
+      for (const stepDef of chain) {
+        if (a.escalated_levels.includes(stepDef.tier)) continue;               // this level already sent
+        if (now - Date.parse(a.at) < stepDef.after_min * 60000) continue;      // not due yet
+        a.escalated_levels.push(stepDef.tier);
+        a.escalated = true;   // kept for any old code/reporting that still reads the boolean
+        const tierDef = (depotCfg && depotCfg.escalation_tiers[stepDef.tier]) || this.alertConfig.escalation_tiers[stepDef.tier];
         if (tierDef) {
           // Coach/EMU-scoped: only people ASSIGNED to this alert's own coach, holding the tier's
           // role, are escalated to — plus the tier's fixed emails/phones (if any), which are meant
@@ -602,9 +617,9 @@ class Store {
           const tier = { name: tierDef.name,
             emails: [...new Set([...(tierDef.emails || []), ...scoped.map((u) => u.email).filter(Boolean)])],
             phones: [...new Set([...(tierDef.phones || []), ...scoped.map((u) => u.phone).filter(Boolean)])] };
-          out.push({ alert: a, tier });
+          out.push({ alert: a, tier, level: stepDef.tier });
         }
-        this.logAudit({ user: 'system', action: 'escalate_alert', detail: `#${a.id} -> ${rule.escalate_to}${a.coach_id ? ' (scoped to coach ' + a.coach_id + (depotCfg ? ', depot policy ' + depotId : '') + ')' : ''}` });
+        this.logAudit({ user: 'system', action: 'escalate_alert', detail: `#${a.id} -> ${stepDef.tier}${a.coach_id ? ' (scoped to coach ' + a.coach_id + (depotCfg ? ', depot policy ' + depotId : '') + ')' : ''}` });
       }
     }
     return out;
@@ -725,7 +740,7 @@ class Store {
     const cur = this.depotEscalation.get(depot_id) || { rules: {}, escalation_tiers: {} };
     if (patch.rules) for (const sev of Object.keys(patch.rules)) {
       if (unsafeKey(sev)) continue;
-      if (!own(cur.rules, sev)) cur.rules[sev] = { escalate_to: '', escalate_after_min: 0 };
+      if (!own(cur.rules, sev)) cur.rules[sev] = { escalation: [] };
       Object.assign(cur.rules[sev], patch.rules[sev]);
     }
     if (patch.escalation_tiers) for (const k of Object.keys(patch.escalation_tiers)) {

@@ -575,7 +575,7 @@
 
       <div class="view-head"><h2 style="font-size:14px">Alert Routing Rules</h2><span class="desc">Per severity: channels, recipients, escalation</span></div>
       <div class="panel" style="margin-bottom:18px;overflow-x:auto"><table>
-        <thead><tr><th>Severity</th><th>Email</th><th>SMS</th><th>Email recipients</th><th>Phone recipients</th><th>Escalate to</th><th>After (min)</th><th></th></tr></thead>
+        <thead><tr><th>Severity</th><th>Email</th><th>SMS</th><th>Email recipients</th><th>Phone recipients</th><th>Escalation chain (L1→L2→L3→L4)</th><th></th></tr></thead>
         <tbody id="ruleRows"></tbody></table></div>
 
       <div class="view-head"><h2 style="font-size:14px">Escalation Tiers</h2><span class="desc">Scoped by coach/EMU: only staff ASSIGNED to that alert's coach and holding the tier's role are escalated to. "Fixed" recipients (optional) see every escalation at that level, fleet-wide.</span></div>
@@ -1629,23 +1629,25 @@
     var sev=prompt('Which severity to set for '+dp.depot_id+' only? critical / high / warning / rapid_rise / low_battery\n(Offline is not configurable here — it is always email-only, fleet-wide, see Notify tab.)','critical');
     if(!sev)return;sev=sev.trim();
     if(['critical','high','warning','rapid_rise','low_battery'].indexOf(sev)<0){alert('Unknown severity: '+sev);return;}
-    var curRule=(cur.rules&&cur.rules[sev])||{escalate_to:'',escalate_after_min:0};
-    var tierKey=prompt('Escalate '+sev+' alerts on '+dp.depot_id+'\'s coaches to which tier? L1/L2/L3/L4 (blank = no escalation for this depot+severity)',curRule.escalate_to||'');
-    if(tierKey===null)return;tierKey=tierKey.trim();
-    var after=curRule.escalate_after_min||0;
-    if(tierKey){var a=prompt('Escalate after how many minutes (this depot only)?',after||15);if(a===null)return;after=+a||0;}
-    var patch={rules:{}};patch.rules[sev]={escalate_to:tierKey,escalate_after_min:after};
-    if(tierKey){
-      var curTier=(cur.escalation_tiers&&cur.escalation_tiers[tierKey])||{};
-      var name=prompt('Name for tier '+tierKey+' at '+dp.depot_id+':',curTier.name||tierKey);
-      var role=prompt('Escalate to staff holding which role, ASSIGNED to a coach in '+dp.depot_id+'? super_admin / railway_hq / depot_admin / maintenance_eng / observer',curTier.role||'');
-      if(role===null)return;role=role.trim();
-      if(role&&['super_admin','railway_hq','depot_admin','maintenance_eng','observer'].indexOf(role)<0){alert('Role must be one of: super_admin, railway_hq, depot_admin, maintenance_eng, observer (or leave blank).');return;}
-      var emails=prompt('Fixed emails for this depot\'s tier (comma separated, usually blank):',csv(curTier.emails));if(emails===null)return;
-      var phones=prompt('Fixed phones for this depot\'s tier (comma separated, usually blank):',csv(curTier.phones));if(phones===null)return;
-      patch.escalation_tiers={};patch.escalation_tiers[tierKey]={name:name,role:role||null,emails:arr(emails),phones:arr(phones)};
+    var curRule=(cur.rules&&cur.rules[sev])||{escalation:[]};
+    if(!confirm('Set the L1→L2→L3→L4 escalation chain for '+sev+' on '+dp.depot_id+'\'s own coaches? Each level has its own time (in minutes since the alert was raised); leave a level blank to skip it.'))return;
+    var chain=promptChain(sev+' ('+dp.depot_id+' only)',curRule);if(chain===null)return;
+    var patch={rules:{}};patch.rules[sev]={escalation:chain};
+    if(chain.length){
+      patch.escalation_tiers={};
+      for(var i=0;i<chain.length;i++){
+        var tierKey=chain[i].tier;
+        var curTier=(cur.escalation_tiers&&cur.escalation_tiers[tierKey])||{};
+        var name=prompt('Name for tier '+tierKey+' at '+dp.depot_id+':',curTier.name||tierKey);if(name===null)return;
+        var role=prompt('Tier '+tierKey+' at '+dp.depot_id+': escalate to staff holding which role, ASSIGNED to a coach in this depot? super_admin / railway_hq / depot_admin / maintenance_eng / observer',curTier.role||'');
+        if(role===null)return;role=role.trim();
+        if(role&&['super_admin','railway_hq','depot_admin','maintenance_eng','observer'].indexOf(role)<0){alert('Role must be one of: super_admin, railway_hq, depot_admin, maintenance_eng, observer (or leave blank).');return;}
+        var emails=prompt('Tier '+tierKey+': fixed emails for this depot (comma separated, usually blank):',csv(curTier.emails));if(emails===null)return;
+        var phones=prompt('Tier '+tierKey+': fixed phones for this depot (comma separated, usually blank):',csv(curTier.phones));if(phones===null)return;
+        patch.escalation_tiers[tierKey]={name:name,role:role||null,emails:arr(emails),phones:arr(phones)};
+      }
     }
-    api('/depots/'+dp.depot_id+'/escalation',{method:'PUT',body:JSON.stringify(patch)}).then(function(){alert('Saved: '+dp.depot_id+' now has its own escalation for '+sev+'.');}).catch(function(e){alert(e.message);});
+    api('/depots/'+dp.depot_id+'/escalation',{method:'PUT',body:JSON.stringify(patch)}).then(function(){alert('Saved: '+dp.depot_id+' now has its own escalation chain for '+sev+' ('+chainStr({escalation:chain})+').');}).catch(function(e){alert(e.message);});
   }
   async function doRestore(ev){
     var file=ev.target.files&&ev.target.files[0];if(!file)return;
@@ -1893,6 +1895,7 @@
 
   // ---- Notifications ----
   var SEVERITIES=['warning','high','critical','rapid_rise','offline','low_battery'];
+  var TIERS=['L1','L2','L3','L4'];
   function csv(a){return (a||[]).join(', ');}
   function arr(s){return (s||'').split(',').map(function(x){return x.trim();}).filter(Boolean);}
   async function renderNotify(){
@@ -1916,8 +1919,7 @@
       row.appendChild(smsCell);
       row.appendChild(el('td',null,csv(r.emails)||'—'));
       row.appendChild(el('td',null,csv(r.phones)||'—'));
-      row.appendChild(el('td',null,r.escalate_to||'—'));
-      row.appendChild(el('td',null,r.escalate_after_min||'0'));
+      row.appendChild(el('td',null,chainStr(r)));
       var ac=el('td');if(!ro)ac.appendChild(mkBtn('Edit',function(){editRule(sev,r);}));else ac.textContent='—';
       row.appendChild(ac);tr.appendChild(row);
     });
@@ -1952,6 +1954,28 @@
       lb.appendChild(row);
     });
   }
+  function chainStr(r){
+    var chain=escalationChain(r);
+    if(!chain.length)return '— (no escalation)';
+    return chain.map(function(s){return s.tier+'@'+s.after_min+'m';}).join(' → ');
+  }
+  function escalationChain(r){
+    if(Array.isArray(r.escalation))return r.escalation.filter(function(s){return s&&s.tier&&s.after_min;});
+    if(r.escalate_to&&r.escalate_after_min)return [{tier:r.escalate_to,after_min:r.escalate_after_min}];
+    return [];
+  }
+  function promptChain(sev,r){
+    var byTier={};escalationChain(r).forEach(function(s){byTier[s.tier]=s.after_min;});
+    var chain=[];
+    for(var i=0;i<TIERS.length;i++){
+      var tk=TIERS[i];
+      var v=prompt('Escalate '+sev+' alerts to '+tk+' after how many minutes?\n(blank or 0 = skip this level — the chain does not have to use all 4)',byTier[tk]||'');
+      if(v===null)return null;
+      v=(v||'').trim();
+      if(v&&+v>0)chain.push({tier:tk,after_min:+v});
+    }
+    return chain;
+  }
   function editRule(sev,r){
     var email=confirm('Send EMAIL for '+sev+' alerts? OK=yes Cancel=no');
     var sms;
@@ -1959,11 +1983,15 @@
     else sms=confirm('Send SMS for '+sev+' alerts? OK=yes Cancel=no');
     var emails=prompt('Email recipients for '+sev+' (comma separated):',csv(r.emails));if(emails===null)return;
     var phones=prompt('Phone recipients for '+sev+' (comma separated):',csv(r.phones));if(phones===null)return;
-    var esc=prompt('Escalate to tier (L1/L2/L3/L4, blank=none):',r.escalate_to||'');
-    var after=prompt('Escalate after minutes (0=no escalation):',r.escalate_after_min||0);
-    var ch=[];if(email)ch.push('email');if(sms)ch.push('sms');
-    var patch={rules:{}};patch.rules[sev]={channels:ch,emails:arr(emails),phones:arr(phones),escalate_to:esc||'',escalate_after_min:+after||0};
-    adminCallNotify(patch);
+    if(!confirm('Set up the escalation chain for '+sev+' next? (L1 → L2 → L3 → L4, each with its own time — skip any level by leaving it blank)\n\nOK = yes\nCancel = keep the escalation chain as it is'))return doSaveRule();
+    var chain=promptChain(sev,r);if(chain===null)return;
+    return doSaveRule(chain);
+    function doSaveRule(newChain){
+      var ch=[];if(email)ch.push('email');if(sms)ch.push('sms');
+      var patch={rules:{}};patch.rules[sev]={channels:ch,emails:arr(emails),phones:arr(phones)};
+      if(newChain)patch.rules[sev].escalation=newChain;
+      adminCallNotify(patch);
+    }
   }
   function editTier(k,t){
     var name=prompt('Name for tier '+k+':',t.name||'');if(name===null)return;
