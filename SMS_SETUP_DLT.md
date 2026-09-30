@@ -81,7 +81,9 @@ Notify tab -> "Alert Routing Rules" -> Edit for each severity you want by SMS:
 - "Send SMS?" -> OK
 - "Phone recipients" -> 10-digit numbers, comma separated: `9876543210,9123456780`
   (+91 and spaces are removed automatically)
-Recommended: Offline, Critical, High, Rapid rise by SMS; Warning and Low battery by e-mail.
+Recommended: Critical, High, Rapid rise by SMS; Warning and Low battery by e-mail.
+Offline is EMAIL ONLY by a hard rule in the code (not editable in the dashboard) — an offline TM/coach
+never sends SMS, and the email itself repeats once an hour for as long as the outage continues.
 
 ---------------------------------------------------------------------------
 ## 5. Test

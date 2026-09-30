@@ -145,7 +145,11 @@ function createNotifier() {
     const sms = alert.severity === 'offline'
       ? fill(cfg.templates.sms_offline || '[EMU-TM ALERT] {severity}: {message} @ {time}', ctx)
       : fill(cfg.templates.sms, ctx);
-    const channels = rule.channels || [];
+    // HARD RULE (not admin-configurable): an offline TM/coach is a communication problem, not
+    // necessarily a hazard, and stays "active" for as long as the outage lasts — so it must never
+    // spam SMS. Email only, and only once an hour while it persists (see the offline-reminder timer
+    // in server.js, which relies on the emailSend throttle below for that hourly cadence).
+    const channels = (rule.channels || []).filter((c) => !(c === 'sms' && alert.severity === 'offline'));
     const dltPayload = dlt.build(alert, false);
     // SMS costs money and a sensor that stays hot re-raises its alert every minute: send the same
     // recipient / coach / severity again only after SMS_REPEAT_MIN minutes (0 = always send).
@@ -169,8 +173,21 @@ function createNotifier() {
       if (rec.ok) smsLast.set(key, Date.now());
     };
 
+    // Safety net (the _raise() dedup above should already stop a sustained fault from re-notifying,
+    // but this catches any edge case — e.g. a manual re-trigger) so one address is not emailed again
+    // for the same coach+severity within EMAIL_REPEAT_MIN minutes (0 = always send).
+    const emailLast = dispatchForAlert.emailLast || (dispatchForAlert.emailLast = new Map());
+    const emailSend = async (to) => {
+      const every = (Number(config.EMAIL_REPEAT_MIN) || 0) * 60000;
+      const ekey = `${alert.severity}|${alert.coach_id || alert.sensor_id}|${to}`;
+      const last = emailLast.get(ekey) || 0;
+      if (every && Date.now() - last < every) { console.log(`[email] not repeated to ${to} (${ekey.split('|').slice(0, 2).join(' ')}): last sent ${Math.round((Date.now() - last) / 60000)} min ago, limit ${config.EMAIL_REPEAT_MIN} min`); return; }
+      const rec = await sendEmail(to, subject, body, store);
+      if (rec.ok) emailLast.set(ekey, Date.now());
+    };
+
     // 1) Control-room recipients configured on the rule (see everything).
-    if (channels.includes('email')) for (const to of (rule.emails || [])) await sendEmail(to, subject, body, store);
+    if (channels.includes('email')) for (const to of (rule.emails || [])) await emailSend(to);
     if (channels.includes('sms')) for (const to of (rule.phones || [])) await smsSend(to);
 
     // 2) Assigned users — each user is notified ONLY for coaches/EMUs assigned
@@ -180,7 +197,7 @@ function createNotifier() {
       const sentEmail = new Set(rule.emails || []);
       const sentSms = new Set(rule.phones || []);
       for (const u of store.usersForCoach(alert.coach_id)) {
-        if (channels.includes('email') && u.email && !sentEmail.has(u.email)) { await sendEmail(u.email, subject, body, store); sentEmail.add(u.email); }
+        if (channels.includes('email') && u.email && !sentEmail.has(u.email)) { await emailSend(u.email); sentEmail.add(u.email); }
         if (channels.includes('sms') && u.phone && !sentSms.has(u.phone)) { await smsSend(u.phone); sentSms.add(u.phone); }
       }
     }
@@ -193,8 +210,10 @@ function createNotifier() {
     const cfg = store.getAlertConfig();
     const subject = '[ESCALATION] ' + fill(cfg.templates.email_subject, ctx);
     const body = 'ESCALATED (' + (tier.name || '') + ')\n' + fill(cfg.templates.email_body, ctx);
-    const sms = 'ESCALATED: ' + fill(cfg.templates.sms, ctx);
     for (const to of (tier.emails || [])) await sendEmail(to, subject, body, store);
+    // Same hard rule as the main dispatch: offline never sends SMS, escalation included.
+    if (alert.severity === 'offline') return;
+    const sms = 'ESCALATED: ' + fill(cfg.templates.sms, ctx);
     const escPayload = dlt.build(alert, true);
     for (const to of (tier.phones || [])) await sendSMS(to, sms, store, escPayload);
   }

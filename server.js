@@ -23,7 +23,31 @@ const store = new Store();
 const notifier = createNotifier();
 store.setNotifier((alert) => notifier.dispatchForAlert(alert, store));
 
+// Refuses to start with a configuration that would be unsafe in production. JWT_SECRET is checked
+// unconditionally (a weak/default one lets anyone forge a super_admin session — there is no safe
+// fallback for that). DATA_API_KEY/BOOTSTRAP_KEY are checked only when STRICT_SECURITY=true, because
+// an existing fleet of field devices may still be using the shared defaults; turn STRICT_SECURITY on
+// once every device has its own per-device key (Admin -> Field Devices) so the shared defaults are
+// refused outright instead of just warned about.
+function validateConfig() {
+  const problems = [];
+  const weakSecret = !config.JWT_SECRET || config.JWT_SECRET.length < 32 || config.JWT_SECRET === 'himnish-raip-d3-dev-secret-change-me';
+  if (weakSecret && !config.DEMO_MODE) problems.push('JWT_SECRET is missing, too short (<32 chars) or the built-in default. Set: openssl rand -hex 32');
+  if (config.STRICT_SECURITY) {
+    if (config.DATA_API_KEY === 'himnish_emu_key_2025') problems.push('STRICT_SECURITY is on but DATA_API_KEY is still the public default.');
+    if (config.BOOTSTRAP_KEY === 'himnish_bootstrap_2025') problems.push('STRICT_SECURITY is on but BOOTSTRAP_KEY is still the public default.');
+  }
+  if (!config.DEMO_MODE && !config.DATABASE_URL) problems.push('DEMO_MODE is off but DATABASE_URL is not set — readings will only be kept in a local JSON file, not a real database.');
+  if (problems.length) {
+    console.error('\n[FATAL] Refusing to start — fix these in .env:');
+    problems.forEach((p) => console.error('  - ' + p));
+    console.error('(DEMO_MODE=true skips the JWT_SECRET/DATABASE_URL checks, for local testing only.)\n');
+    process.exit(1);
+  }
+}
+
 async function bootstrap() {
+  validateConfig();
   if (config.DATABASE_URL) {
     try {
       const db = createDb(config.DATABASE_URL);
@@ -41,6 +65,21 @@ async function bootstrap() {
   setInterval(() => {
     for (const { alert, tier } of store.dueEscalations()) notifier.sendEscalation(alert, tier, store);
   }, (config.ESCALATION_INTERVAL || 60) * 1000);
+  // Offline alerts never re-raise while the outage continues (one incident = one active alert row,
+  // see store.js _raise), so nothing else would ever re-notify for a coach that stays offline for
+  // hours. Check every 5 minutes and re-dispatch email for each still-active offline alert; the
+  // emailSend throttle inside dispatchForAlert (EMAIL_REPEAT_MIN, default 60) is what actually turns
+  // that into "one email now, the next one only after an hour if it is still offline" — SMS is
+  // hard-blocked for this severity in notify.js regardless of what the rule's channels say.
+  setInterval(() => {
+    for (const alert of store.activeOfflineAlerts()) notifier.dispatchForAlert(alert, store).catch(() => {});
+  }, 5 * 60000);
+  // Automatic backups: first one 2 minutes after boot (so it never competes with startup), then
+  // every BACKUP_INTERVAL_HOURS. Disabled entirely in DEMO_MODE (nothing worth backing up there).
+  if (!config.DEMO_MODE) {
+    setTimeout(() => store.autoBackup(), 2 * 60000);
+    setInterval(() => store.autoBackup(), config.BACKUP_INTERVAL_HOURS * 3600000);
+  }
   startPoller(store);
   if (config.DEMO_MODE) startDemo(store);
   require('./src/mqtt').startMqtt(store, config); // optional, only if MQTT_URL set
@@ -218,7 +257,22 @@ app.use('/api/v1', ingestRouter(store));                 // hardware ingest + de
 app.use('/api/v1', apiLimiter, apiRouter(store, notifier)); // dashboard API (rate-limited)
 
 app.get('/healthz', (req, res) => res.json({ ok: true, demo: config.DEMO_MODE }));
-app.get('/docs', (req, res) => res.sendFile(path.join(__dirname, 'public', 'docs.html')));
+
+// API docs (Swagger UI + openapi.json) reveal the full endpoint surface, so they are hidden unless
+// DOCS_USER/DOCS_PASSWORD are set in .env, and then gated with HTTP Basic Auth (a browser-navigable
+// page can't send a Bearer token, so the dashboard's own login can't protect it).
+function requireDocsAuth(req, res, next) {
+  if (!config.DOCS_USER || !config.DOCS_PASSWORD) return res.status(404).end();
+  const h = req.headers.authorization || '';
+  const [user, pass] = h.startsWith('Basic ') ? Buffer.from(h.slice(6), 'base64').toString().split(':') : [];
+  const safeEq = (a, b) => { const A = Buffer.from(String(a || '')), B = Buffer.from(String(b || ''));
+    return A.length === B.length && crypto.timingSafeEqual(A, B); };
+  const ok = safeEq(user, config.DOCS_USER) && safeEq(pass, config.DOCS_PASSWORD);
+  if (!ok) { res.setHeader('WWW-Authenticate', 'Basic realm="EMU API docs"'); return res.status(401).end('Authentication required'); }
+  next();
+}
+app.get('/docs', requireDocsAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'docs.html')));
+app.get('/openapi.json', requireDocsAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'openapi.json')));
 
 // Unknown API paths get a JSON 404, not the SPA HTML.
 app.use('/api', (req, res) => res.status(404).json({ error: 'Unknown API endpoint' }));

@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const pw = require('./password');
 const config = require('./config');
 
@@ -63,6 +64,7 @@ class Store {
     this.sensorRegistry = new Map(); // sensor_id -> { serial_no, calibration_date, firmware, warranty, installation_date }
     this.depots = new Map();         // depot_id -> { depot_id, name, region, lat, lng }
     this.devices = new Map();        // device_id -> field RUT config (self-update)
+    this._deviceByKey = new Map();   // per-device api_key -> device (index for ingest auth; rebuilt on load, kept in sync on write)
     this._ingestCount = 0;
     this._startedAt = Date.now();
     this.thresholds = config.defaultThresholds();
@@ -95,11 +97,17 @@ class Store {
     this.maintenance = s.maintenance || [];
     Object.entries(s.sensorRegistry || {}).forEach(([k, v]) => this.sensorRegistry.set(k, v));
     (s.depots || []).forEach((d) => this.depots.set(d.depot_id, d));
-    (s.devices || []).forEach((d) => this.devices.set(d.device_id, d));
+    (s.devices || []).forEach((d) => { this.devices.set(d.device_id, d); this._indexDeviceKey(d); });
     if (s.thresholds) this.thresholds = Object.assign(config.defaultThresholds(), s.thresholds);
     if (s.alertConfig) this.alertConfig = Object.assign(defaultAlertConfig(), s.alertConfig);
     if (Array.isArray(s.audit) && !this.audit.length) this.audit = s.audit;
     if (Array.isArray(s.secLog) && !this.secLog.length) this.secLog = s.secLog;
+    // Alerts used to live in memory only and vanished on every restart/redeploy, silently losing
+    // active/unacknowledged alerts and all acknowledgement history. Now restored like everything else.
+    if (Array.isArray(s.alerts) && !this.alerts.length) this.alerts = s.alerts;
+    if (Array.isArray(s.notifications) && !this.notifications.length) this.notifications = s.notifications;
+    if (s.alertSeq) this._alertSeq = Math.max(this._alertSeq, s.alertSeq);
+    for (const a of this.alerts) if (a.id >= this._alertSeq) this._alertSeq = a.id + 1;   // never reuse an id even if alertSeq was stale
   }
 
   // Load master data. Prefers the DB state blob (most durable) when a DB is
@@ -186,6 +194,9 @@ class Store {
       alertConfig: this.alertConfig,
       audit: this.audit.slice(0, 1500),
       secLog: this.secLog.slice(0, 500),
+      alerts: this.alerts.slice(0, 5000),
+      notifications: this.notifications.slice(0, 2000),
+      alertSeq: this._alertSeq,
     };
   }
 
@@ -222,7 +233,19 @@ class Store {
   }
 
   // ===== Alert config (SMS/Email routing, escalation, templates) ==========
-  getAlertConfig() { return this.alertConfig; }
+  getAlertConfig() {
+    // Defensive normalisation, not just at dispatch time: SMS is a hard-disabled channel for the
+    // "offline" severity (see notify.js), so the admin screen must never show it as ticked — even for
+    // a config saved before this rule existed. This never mutates the stored config, only the view.
+    const cfg = this.alertConfig;
+    if (cfg.rules && cfg.rules.offline && (cfg.rules.offline.channels || []).includes('sms')) {
+      return Object.assign({}, cfg, { rules: Object.assign({}, cfg.rules, {
+        offline: Object.assign({}, cfg.rules.offline, { channels: cfg.rules.offline.channels.filter((c) => c !== 'sms') }) }) });
+    }
+    return cfg;
+  }
+  // Currently-active "offline" alerts — used by the hourly offline-reminder timer in server.js.
+  activeOfflineAlerts() { return this.alerts.filter((a) => a.severity === 'offline' && a.state === 'active'); }
   setAlertConfig(patch, user) {
     // never let request keys such as "__proto__" reach Object.assign (prototype pollution)
     const unsafeKey = (k) => k === '__proto__' || k === 'constructor' || k === 'prototype';
@@ -247,15 +270,41 @@ class Store {
   listSensorRegistry() {
     // Known sensors (live or in DB backfill) merged with any registry metadata.
     const ids = new Set([...this.sensors.keys(), ...this.sensorRegistry.keys()]);
+    const CAL_INTERVAL_DAYS = Number(config.CALIBRATION_INTERVAL_DAYS) || 365;
+    const WARN_WITHIN_DAYS = Number(config.WARRANTY_WARN_DAYS) || 60;
+    const now = Date.now();
     return [...ids].sort().map((id) => {
       const s = this.sensors.get(id) || {};
       const r = this.sensorRegistry.get(id) || {};
-      return {
+      const out = {
         sensor_id: id, coach_id: s.coach_id || null, tm_id: s.tm_id || null,
         serial_no: r.serial_no || null, calibration_date: r.calibration_date || null,
         firmware: r.firmware || null, warranty: r.warranty || null, installation_date: r.installation_date || null,
         status: s.status || 'unknown',
+        calibration_overdue: false, calibration_days_overdue: null,
+        warranty_expiring: false, warranty_expired: false, warranty_days_left: null,
       };
+      // "Overdue" = more than CAL_INTERVAL_DAYS since the last recorded calibration. No date on file
+      // is treated as unknown, not overdue (nothing to warn about until a first date is entered).
+      if (r.calibration_date) {
+        const calMs = Date.parse(r.calibration_date);
+        if (!isNaN(calMs)) {
+          const daysSince = (now - calMs) / 86400000;
+          if (daysSince > CAL_INTERVAL_DAYS) { out.calibration_overdue = true; out.calibration_days_overdue = Math.round(daysSince - CAL_INTERVAL_DAYS); }
+        }
+      }
+      // "Warranty" is free text ("date or text" per the edit screen); only a value that parses as a
+      // real date can be checked, so anything else (e.g. "5 years") is left alone rather than guessed at.
+      if (r.warranty) {
+        const wMs = Date.parse(r.warranty);
+        if (!isNaN(wMs)) {
+          const daysLeft = Math.round((wMs - now) / 86400000);
+          out.warranty_days_left = daysLeft;
+          if (daysLeft < 0) out.warranty_expired = true;
+          else if (daysLeft <= WARN_WITHIN_DAYS) out.warranty_expiring = true;
+        }
+      }
+      return out;
     });
   }
   setSensorRegistry(sensor_id, patch, actor) {
@@ -302,6 +351,30 @@ class Store {
   exportBackup() {
     return Object.assign({ _backup_version: 1, _exported_at: new Date().toISOString() }, this._snapshot());
   }
+  // Scheduled, no admin action needed: writes a dated backup file and deletes ones older than
+  // BACKUP_KEEP_DAYS (default 14). Runs from server.js on a timer. Failure here (e.g. disk full)
+  // is logged but never throws — a backup problem must not take the live app down.
+  autoBackup() {
+    try {
+      const dir = config.BACKUP_DIR || path.join(config.DATA_DIR, 'backups');
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const file = path.join(dir, `backup-${stamp}.json`);
+      fs.writeFileSync(file, JSON.stringify(this.exportBackup()), { mode: 0o600 });
+      const keepMs = (Number(config.BACKUP_KEEP_DAYS) || 14) * 86400000;
+      const now = Date.now();
+      for (const f of fs.readdirSync(dir)) {
+        if (!/^backup-.*\.json$/.test(f)) continue;
+        const full = path.join(dir, f);
+        try { if (now - fs.statSync(full).mtimeMs > keepMs) fs.unlinkSync(full); } catch (e) {}
+      }
+      console.log(`[backup] wrote ${file}`);
+      return file;
+    } catch (e) {
+      console.error('[backup] auto backup failed:', e.message);
+      return null;
+    }
+  }
   importBackup(snapshot, actor) {
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('invalid backup');
     // Validate BEFORE touching live data: a wrong/empty file must never wipe users, coaches or field devices.
@@ -332,11 +405,25 @@ class Store {
 
   // ===== Field device registry (self-updating RUT config) ================
   listDevices() {
-    return [...this.devices.values()].map((d) => Object.assign({}, d));
+    // api_key is a live credential: mask it in the list (last 6 chars only, enough to tell devices
+    // apart) so any GLOBAL-scoped viewer doesn't see every device's full key just by opening the page.
+    return [...this.devices.values()].map((d) => {
+      const o = Object.assign({}, d);
+      if (o.api_key) { o.api_key_masked = 'dk_...' + o.api_key.slice(-6); delete o.api_key; }
+      return o;
+    });
   }
+  // Random, high-entropy per-device credential (not a human password, so a fast hash is fine —
+  // it only ever needs to be compared, never brute-force-resistant on top of its own 192 bits).
+  _genDeviceKey() { return 'dk_' + crypto.randomBytes(24).toString('hex'); }
+  _indexDeviceKey(d) { if (d.api_key) this._deviceByKey.set(d.api_key, d); }
+  // Used by ingest to authenticate a request and bind it to the device's own registered coach.
+  deviceByApiKey(key) { return key ? this._deviceByKey.get(key) || null : null; }
+
   upsertDevice(body, actor) {
     if (!body.device_id) throw new Error('device_id required');
     const cur = this.devices.get(body.device_id) || { device_id: body.device_id, last_seen: null, last_ip: null };
+    if (!cur.api_key) { cur.api_key = this._genDeviceKey(); this._indexDeviceKey(cur); }   // every device gets its own key, existing or new
     ['name', 'coach_id', 'emu_id', 'tag1', 'tag2', 'tag3', 'tag4'].forEach((k) => { if (body[k] !== undefined) cur[k] = body[k] || null; });
     // Optional per-device interval override, in seconds. Leave unset (null) to
     // follow the global "Log interval (s)" from Admin -> Thresholds.
@@ -355,8 +442,18 @@ class Store {
     this._persist();
     return cur;
   }
+  // New key for a device that was physically replaced, or whose old key may have leaked.
+  rotateDeviceKey(device_id, actor) {
+    const d = this.devices.get(device_id); if (!d) throw new Error('device not found');
+    if (d.api_key) this._deviceByKey.delete(d.api_key);
+    d.api_key = this._genDeviceKey(); this._indexDeviceKey(d);
+    this.logAudit({ user: actor, action: 'rotate_device_key', detail: device_id });
+    this._persist();
+    return { device_id, api_key: d.api_key };
+  }
   deleteDevice(device_id, actor) {
     if (!this.devices.has(device_id)) throw new Error('device not found');
+    const old = this.devices.get(device_id); if (old && old.api_key) this._deviceByKey.delete(old.api_key);
     this.devices.delete(device_id);
     this.logAudit({ user: actor, action: 'delete_device', detail: device_id });
     this._persist();
@@ -367,6 +464,10 @@ class Store {
     if (!d) return null;
     d.last_seen = new Date().toISOString();
     if (ip) d.last_ip = ip;
+    // Zero-touch migration: a device registered before per-device keys existed gets one generated
+    // right here, on its own next config pull. The self-update RUT script re-reads "api_key" from
+    // this response every cycle and switches to it automatically — no site visit needed.
+    if (!d.api_key) { d.api_key = this._genDeviceKey(); this._indexDeviceKey(d); this._persist(); }
     // note: last_seen is persisted lazily (at most every 5 min), see _persistSlow()
     this._persistSlow();
     return {
@@ -376,7 +477,7 @@ class Store {
       coach_id: d.coach_id || null,
       emu_id: d.emu_id || null,
       ingest_path: '/api/v1/ingest',
-      api_key: config.DATA_API_KEY,
+      api_key: d.api_key,
       tags: [d.tag1 || '1.3', d.tag2 || '1.4', d.tag3 || '1.5', d.tag4 || '1.6'],
       // Post interval is centrally controlled from Admin → Thresholds → "Log
       // interval (s)" — one setting governs every push-mode field device.
@@ -691,6 +792,14 @@ class Store {
     if (!scope || scope.all) return all.slice(0, 500);
     return all.filter((m) => m.coach_id && scope.coaches.has(m.coach_id)).slice(0, 500);
   }
+  // Target turnaround time, in hours, for a maintenance record — how "Overdue" is decided.
+  // An explicit priority (critical/high/normal/low) always wins; otherwise the type decides.
+  static SLA_HOURS_BY_TYPE = { corrective: 24, sensor_replacement: 48, battery_replacement: 48, work_order: 72, calibration: 168, preventive: 168 };
+  static SLA_HOURS_BY_PRIORITY = { critical: 4, high: 24, normal: 72, low: 168 };
+  slaHoursFor(rec) {
+    if (rec.priority && Store.SLA_HOURS_BY_PRIORITY[rec.priority] != null) return Store.SLA_HOURS_BY_PRIORITY[rec.priority];
+    return Store.SLA_HOURS_BY_TYPE[rec.type] || 72;
+  }
   createMaintenance(body, actor) {
     if (!body.coach_id) throw new Error('coach_id required');
     if (!body.title) throw new Error('title required');
@@ -698,6 +807,7 @@ class Store {
       id: (this.maintenance[0] ? this.maintenance[0].id : 0) + 1,
       coach_id: body.coach_id,
       type: body.type || 'work_order',        // work_order | preventive | corrective | calibration | sensor_replacement | battery_replacement
+      priority: ['critical', 'high', 'normal', 'low'].includes(body.priority) ? body.priority : null,   // null = SLA decided by type
       title: body.title,
       status: body.status || 'open',          // open | in_progress | closed
       assigned_to: body.assigned_to || null,
@@ -713,10 +823,34 @@ class Store {
     const m = this.maintenance.find((x) => x.id === Number(id));
     if (!m) throw new Error('record not found');
     ['title', 'type', 'assigned_to', 'notes'].forEach((k) => { if (patch[k] !== undefined) m[k] = patch[k]; });
+    if (patch.priority !== undefined) m.priority = ['critical', 'high', 'normal', 'low'].includes(patch.priority) ? patch.priority : null;
     if (patch.status !== undefined) { m.status = patch.status; if (patch.status === 'closed' && !m.closed_at) m.closed_at = new Date().toISOString(); if (patch.status !== 'closed') m.closed_at = null; }
     this.logAudit({ user: actor, action: 'update_maintenance', detail: `#${id} -> ${m.status}` });
     this._persist();
     return m;
+  }
+  // Maintenance list with computed SLA fields (never stored, so tightening/loosening the SLA table
+  // above takes effect immediately for every existing record, not just new ones).
+  maintenanceWithSla(list) {
+    const now = Date.now();
+    return (list || this.maintenance).map((m) => {
+      const targetH = this.slaHoursFor(m);
+      const dueAt = new Date(Date.parse(m.created_at) + targetH * 3600000).toISOString();
+      const endMs = m.closed_at ? Date.parse(m.closed_at) : now;
+      const hoursOpen = +((endMs - Date.parse(m.created_at)) / 3600000).toFixed(1);
+      const overdue = m.status !== 'closed' && now > Date.parse(dueAt);
+      const closedLate = m.status === 'closed' && Date.parse(m.closed_at) > Date.parse(dueAt);
+      return Object.assign({}, m, { sla_target_hours: targetH, sla_due_at: dueAt, hours_open: hoursOpen, overdue, closed_late: closedLate });
+    });
+  }
+  maintenanceSlaSummary(list) {
+    const withSla = this.maintenanceWithSla(list);
+    const open = withSla.filter((m) => m.status !== 'closed');
+    const closed = withSla.filter((m) => m.status === 'closed');
+    return {
+      open_total: open.length, open_on_track: open.filter((m) => !m.overdue).length, open_overdue: open.filter((m) => m.overdue).length,
+      closed_total: closed.length, closed_on_time: closed.filter((m) => !m.closed_late).length, closed_late: closed.filter((m) => m.closed_late).length,
+    };
   }
   deleteMaintenance(id, actor) {
     const i = this.maintenance.findIndex((x) => x.id === Number(id));
@@ -836,8 +970,12 @@ class Store {
       if (this.db) this.db.insertReading(meta).catch(() => {});
       return meta;
     }
+    const wasOffline = existing && existing.status === 'offline';
 
     this.sensors.set(r.sensor_id, meta);
+    // The coach (or this sensor) is reporting again: close out its "offline" alert automatically —
+    // otherwise it sits active forever until a human notices the coach came back and acknowledges it.
+    if (wasOffline && r.coach_id) this._autoResolve((a) => a.severity === 'offline' && a.coach_id === r.coach_id, 'coach back online');
     const buf = this.series.get(r.sensor_id) || [];
     buf.push({ t: eventTime, temperature: meta.temperature, battery: meta.battery_health });
     if (buf.length > MAX_SERIES) buf.shift();
@@ -855,6 +993,10 @@ class Store {
         this._raise({ severity: 'rapid_rise', sensor_id: meta.sensor_id, coach_id: meta.coach_id,
           emu_id: meta.emu_id, tm_id: meta.tm_id, value: meta.temperature,
           message: `Rapid rise on ${meta.tm_id || meta.sensor_id} (${slope.toFixed(1)} C/min) at ${meta.temperature.toFixed(1)}C` });
+      } else {
+        // The rise has slowed or the temperature dropped back under the "rapid rise" floor: this was
+        // never auto-resolved before, so a rapid-rise alert would sit active forever otherwise.
+        this._autoResolve((a) => a.sensor_id === meta.sensor_id && a.severity === 'rapid_rise', 'rate of rise back to normal');
       }
     }
 
@@ -910,25 +1052,87 @@ class Store {
     if (s.temperature > t.CFG_CRIT_TEMP) sev = 'critical';
     else if (s.temperature > t.CFG_HIGH_TEMP) sev = 'high';
     else if (s.temperature > t.CFG_WARN_TEMP) sev = 'warning';
+    // Auto-resolve: at most one temperature severity is ever "true" for a sensor at a given moment.
+    // Any OTHER active temperature-severity alert for this sensor is superseded (temp moved to a
+    // different band, or back to normal) and is closed out automatically rather than sitting active
+    // forever until someone manually acknowledges it.
+    const TEMP_SEVS = ['warning', 'high', 'critical'];
+    this._autoResolve((a) => a.sensor_id === s.sensor_id && TEMP_SEVS.includes(a.severity) && a.severity !== sev,
+      sev ? `superseded — now ${sev}` : 'temperature back to normal');
     if (sev) this._raise({ severity: sev, sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id,
       tm_id: s.tm_id, value: s.temperature, message: `${s.tm_id || s.sensor_id} on ${s.coach_id}: ${s.temperature.toFixed(1)}C (${sev})` });
-    if (s.battery_health != null && s.battery_health <= t.CFG_LOW_BATTERY) this._raise({ severity: 'low_battery',
-      sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id, tm_id: s.tm_id, value: s.battery_health,
-      message: `Low battery on ${s.sensor_id}: ${s.battery_health}%` });
+    if (s.battery_health != null && s.battery_health <= t.CFG_LOW_BATTERY) {
+      this._raise({ severity: 'low_battery', sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id, tm_id: s.tm_id,
+        value: s.battery_health, message: `Low battery on ${s.sensor_id}: ${s.battery_health}%` });
+    } else if (s.battery_health != null) {
+      this._autoResolve((a) => a.sensor_id === s.sensor_id && a.severity === 'low_battery', 'battery back above threshold');
+    }
   }
   _raise(a) {
-    const recent = this.alerts.find((x) => x.sensor_id === a.sensor_id && x.severity === a.severity &&
-      x.state === 'active' && (Date.now() - Date.parse(x.at)) < 60000);
+    // One active incident per sensor+severity: as long as an alert for this exact condition is
+    // still 'active' (not yet auto-resolved or acknowledged/closed), a repeated reading of the same
+    // severity does NOT create another row or send another email/SMS — it was previously re-created
+    // (and re-notified) roughly every 60 seconds for as long as a fault lasted, flooding both the
+    // alert list and everyone's inbox/phone for a single ongoing problem. Escalation (separate timer)
+    // still re-notifies an unacknowledged alert after CFG escalate_after_min, so a genuinely ignored
+    // problem is not silent forever — it just isn't spammed every minute either.
+    const recent = this.alerts.find((x) => x.sensor_id === a.sensor_id && x.severity === a.severity && x.state === 'active');
     if (recent) return;
-    this.alerts.unshift(Object.assign({ id: this._alertSeq++ }, a, { state: 'active',
-      at: new Date().toISOString(), acknowledged_by: null, acknowledged_at: null, escalated: false }));
+    const created = Object.assign({ id: this._alertSeq++ }, a, { state: 'active',
+      at: new Date().toISOString(), acknowledged_by: null, acknowledged_at: null, escalated: false });
+    this.alerts.unshift(created);
     if (this.alerts.length > 5000) this.alerts.pop();
+    this._persistSlow();   // alerts are durable now (were memory-only before); throttled since this runs per reading
+    this._logAlertEvent({ alert_id: created.id, event: 'raised', severity: created.severity,
+      sensor_id: created.sensor_id, coach_id: created.coach_id, emu_id: created.emu_id, tm_id: created.tm_id,
+      message: created.message });
     if (this._notifier) { try { Promise.resolve(this._notifier(this.alerts[0])).catch(() => {}); } catch (e) {} }
+  }
+  // Marks every currently-active alert matching `match` as resolved (condition cleared on its own —
+  // distinct from "acknowledged": a resolved alert still shows in history for review/closure).
+  // Fire-and-forget SQL alert-event logging. Guarded against ANY problem with the db object (missing
+  // method, wrong shape, e.g. a test mock or a future db.js that doesn't implement it, or a thrown
+  // error) so this NEVER crashes the live alert/ingest path — a monitoring-history write failing must
+  // never take down actual monitoring.
+  _logAlertEvent(e) {
+    try { if (this.db && typeof this.db.logAlertEvent === 'function') Promise.resolve(this.db.logAlertEvent(e)).catch(() => {}); }
+    catch (err) { /* never let alert-history logging break alerting itself */ }
+  }
+  _autoResolve(match, reason) {
+    let n = 0;
+    for (const a of this.alerts) {
+      if (a.state !== 'active' || !match(a)) continue;
+      a.state = 'resolved'; a.resolved_at = new Date().toISOString(); a.resolved_reason = reason; n++;
+      this._logAlertEvent({ alert_id: a.id, event: 'resolved', severity: a.severity,
+        sensor_id: a.sensor_id, coach_id: a.coach_id, emu_id: a.emu_id, tm_id: a.tm_id, detail: reason });
+    }
+    if (n) this._persistSlow();
+    return n;
   }
   acknowledgeAlert(id, user) {
     const a = this.alerts.find((x) => x.id === Number(id)); if (!a) return null;
+    if (a.state === 'closed') throw new Error('alert is already closed');
     a.state = 'acknowledged'; a.acknowledged_by = user; a.acknowledged_at = new Date().toISOString();
-    this.logAudit({ user, action: 'ack_alert', detail: 'alert #' + id }); return a;
+    this.logAudit({ user, action: 'ack_alert', detail: 'alert #' + id });
+    this._logAlertEvent({ alert_id: a.id, event: 'acknowledged', severity: a.severity,
+      sensor_id: a.sensor_id, coach_id: a.coach_id, emu_id: a.emu_id, tm_id: a.tm_id, actor: user });
+    this._persist();
+    return a;
+  }
+  // Final step of the alert lifecycle: what was done about it, by whom. A closed alert is done —
+  // it no longer counts as active/pending review, but stays in history (never deleted).
+  closeAlert(id, user, { action, reason } = {}) {
+    const a = this.alerts.find((x) => x.id === Number(id)); if (!a) throw new Error('alert not found');
+    if (a.state === 'closed') throw new Error('alert is already closed');
+    if (!action || !String(action).trim()) throw new Error('action taken is required to close an alert');
+    a.state = 'closed'; a.closed_by = user; a.closed_at = new Date().toISOString();
+    a.action_taken = String(action).trim().slice(0, 500); a.closure_reason = reason ? String(reason).trim().slice(0, 500) : '';
+    this.logAudit({ user, action: 'close_alert', detail: `alert #${id}: ${a.action_taken}` });
+    this._logAlertEvent({ alert_id: a.id, event: 'closed', severity: a.severity,
+      sensor_id: a.sensor_id, coach_id: a.coach_id, emu_id: a.emu_id, tm_id: a.tm_id, actor: user,
+      message: a.action_taken, detail: a.closure_reason });
+    this._persist();
+    return a;
   }
   logSecurity(e) {
     this.secLog.unshift(Object.assign({ at: new Date().toISOString() }, e));

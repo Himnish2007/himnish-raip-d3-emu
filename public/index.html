@@ -156,7 +156,7 @@
   .sev.normal{background:var(--ok-bg);color:var(--ok)}
   .sev.low_battery{background:var(--warn-bg);color:var(--warn)}
   .sev.rapid_rise{background:var(--high-bg);color:var(--high)}
-  .state{font-size:11px;color:var(--muted)} .state.active{color:var(--crit)} .state.acknowledged{color:var(--ok)}
+  .state{font-size:11px;color:var(--muted)} .state.active{color:var(--crit)} .state.acknowledged{color:var(--ok)} .state.resolved{color:var(--warn)} .state.closed{color:var(--muted);font-style:italic}
   .mini{background:transparent;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:4px 9px;font-size:12px}
   .mini:hover{border-color:var(--brand);color:var(--brand)}
   select,input.inp{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
@@ -432,9 +432,9 @@
     </section>
 
     <section class="view" id="view-alerts">
-      <div class="view-head"><h2>Alert Management Center</h2><span class="desc">SMS / Email hooks fire on raise · acknowledge to close out</span></div>
+      <div class="view-head"><h2>Alert Management Center</h2><span class="desc">SMS / Email fire once per incident, not repeatedly · condition clearing on its own auto-resolves · acknowledge, then Close with what was done</span></div>
       <div class="row"><div class="f"><label>Filter</label>
-        <select id="alertFilter"><option value="">All states</option><option value="active">Active</option><option value="acknowledged">Acknowledged</option></select></div></div>
+        <select id="alertFilter"><option value="">All states</option><option value="active">Active</option><option value="acknowledged">Acknowledged</option><option value="resolved">Resolved (auto)</option><option value="closed">Closed</option></select></div></div>
       <div class="panel"><table>
         <thead><tr><th>#</th><th>Severity</th><th>Asset</th><th>Detail</th><th>Raised</th><th>State</th><th></th></tr></thead>
         <tbody id="alertRows"></tbody></table>
@@ -657,9 +657,14 @@
         <thead><tr><th>Coach</th><th>EMU</th><th>Sensors</th><th>Avg Temp</th><th>Worst</th><th>Health Score</th></tr></thead>
         <tbody id="coachHealthRows"></tbody></table></div>
       <div class="view-head"><h2 style="font-size:14px">EMU Health</h2></div>
-      <div class="panel"><table>
+      <div class="panel" style="margin-bottom:18px"><table>
         <thead><tr><th>EMU</th><th>Coaches</th><th>Sensors</th><th>Avg Temp</th><th>Health Score</th></tr></thead>
         <tbody id="emuHealthRows"></tbody></table></div>
+      <div class="view-head"><h2 style="font-size:14px">Reliability — MTBF / MTTR (worst first)</h2></div>
+      <div class="desc" style="margin:-4px 0 8px">MTBF = average time between failures (higher is better) · MTTR = average time to repair (lower is better) · from alert history</div>
+      <div class="panel"><table>
+        <thead><tr><th>Coach</th><th>Failures</th><th>MTBF</th><th>MTTR</th><th>Resolved</th><th>Still open</th><th>Last failure</th></tr></thead>
+        <tbody id="reliabilityRows"></tbody></table></div>
     </section>
 
     <section class="view" id="view-assistant">
@@ -985,6 +990,17 @@
       ['Healthy TMs',k.healthy_tms,'','ok'],['Warning TMs',k.warning_tms,'',k.warning_tms?'warn':''],['Critical TMs',k.critical_tms,'',k.critical_tms?'crit':''],
       ['Active Alerts',k.active_alerts,'',k.active_alerts?'crit':''],['Acknowledged',k.acknowledged_alerts,'',''],["Today's Alarms",k.todays_alerts,'',''],
       ['Avg Fleet Temp',k.avg_fleet_temp==null?'—':k.avg_fleet_temp,'°C','accent']];
+    // Fleet reliability + maintenance SLA compliance — one-screen executive summary (HQ / depot roles
+    // see the same cards, automatically scoped to what they can see, same as the rest of the dashboard).
+    try{
+      var rel=await api('/reliability'),sla=await api('/maintenance/sla-summary');
+      var slaTotal=sla.open_total+sla.closed_total;
+      var slaPct=slaTotal?Math.round(100*(sla.open_on_track+sla.closed_on_time)/slaTotal):100;
+      cards.push(['Fleet MTBF',rel.fleet.mtbf_hours==null?'—':fmtHours(rel.fleet.mtbf_hours),'','']);
+      cards.push(['Fleet MTTR',rel.fleet.mttr_hours==null?'—':fmtHours(rel.fleet.mttr_hours),'','']);
+      cards.push(['Maintenance SLA',slaPct+'%','',slaPct<80?'crit':slaPct<95?'warn':'ok']);
+      cards.push(['Overdue Work Orders',sla.open_overdue,'',sla.open_overdue?'crit':'']);
+    }catch(e){/* reliability/SLA cards are a nice-to-have; never block the core overview on them */}
     var g=$('#kpis');g.innerHTML='';
     cards.forEach(function(c){var d=el('div','kpi '+(c[3]||''));d.appendChild(el('div','label',c[0]));var v=el('div','val'+(c[2]?' unit':''),c[1]);if(c[2])v.dataset.unit=c[2];d.appendChild(v);g.appendChild(d);});
   }
@@ -1193,7 +1209,8 @@
     var f=$('#woFilter').value;var shown=f?list.filter(function(m){return m.status===f;}):list;
     var st=$('#maintStats');st.innerHTML='';
     [['Total',list.length,'accent'],['Open',list.filter(function(m){return m.status==='open';}).length,'warn'],
-     ['In Progress',list.filter(function(m){return m.status==='in_progress';}).length,''],['Closed',list.filter(function(m){return m.status==='closed';}).length,'ok']].forEach(function(c){
+     ['In Progress',list.filter(function(m){return m.status==='in_progress';}).length,''],['Closed',list.filter(function(m){return m.status==='closed';}).length,'ok'],
+     ['Overdue (SLA)',list.filter(function(m){return m.overdue;}).length,list.filter(function(m){return m.overdue;}).length?'crit':'ok']].forEach(function(c){
       var d=el('div','kpi '+(c[2]||''));d.appendChild(el('div','label',c[0]));d.appendChild(el('div','val',c[1]));st.appendChild(d);});
     var tb=$('#woRows');tb.innerHTML='';$('#woEmpty').style.display=shown.length?'none':'block';
     var canEdit=['super_admin','depot_admin','maintenance_eng'].indexOf(USER.role)>=0;
@@ -1204,7 +1221,10 @@
       tr.appendChild(el('td',null,m.assigned_to||'—'));
       var stt=el('td');var cl=m.status==='closed'?'ok':m.status==='in_progress'?'warn':'crit';
       var sp=el('span','sev',m.status.replace('_',' '));
-      sp.style.background='var(--'+cl+'-bg)';sp.style.color='var(--'+cl+')';stt.appendChild(sp);tr.appendChild(stt);
+      sp.style.background='var(--'+cl+'-bg)';sp.style.color='var(--'+cl+')';stt.appendChild(sp);
+      if(m.overdue){stt.appendChild(document.createTextNode(' '));var ob=el('span','badge bad','Overdue');ob.title='Past the '+m.sla_target_hours+'h target for this priority/type';stt.appendChild(ob);}
+      else if(m.closed_late){stt.appendChild(document.createTextNode(' '));stt.appendChild(el('span','badge warn','Closed late'));}
+      tr.appendChild(stt);
       tr.appendChild(el('td',null,new Date(m.created_at).toLocaleDateString('en-GB')));
       var ac=el('td');
       if(canEdit)ac.appendChild(mkBtn('Update',function(){updateWo(m);}));
@@ -1219,12 +1239,16 @@
     var type=prompt('Type: work_order / preventive / corrective / calibration / sensor_replacement / battery_replacement','work_order');
     var title=prompt('Title / description:','');if(!title)return;
     var assigned=prompt('Assigned to (optional):','');
-    woCall('/maintenance','POST',{coach_id:coach,type:type,title:title,assigned_to:assigned||null});
+    var priority=prompt('Priority (sets the SLA target): critical=4h, high=24h, normal=72h, low=168h\nLeave blank to use the type\'s own default.','');
+    if(priority&&['critical','high','normal','low'].indexOf(priority.trim())<0){alert('Priority must be one of: critical, high, normal, low (or leave blank).');return;}
+    woCall('/maintenance','POST',{coach_id:coach,type:type,title:title,assigned_to:assigned||null,priority:priority?priority.trim():null});
   }
   function updateWo(m){
     var status=prompt('Status: open / in_progress / closed',m.status);if(!status)return;
     var notes=prompt('Notes (optional):',m.notes||'');
-    woCall('/maintenance/'+m.id,'PUT',{status:status,notes:notes});
+    var priority=prompt('Priority (blank = use the type\'s default SLA): critical / high / normal / low',m.priority||'');
+    if(priority&&['critical','high','normal','low'].indexOf(priority.trim())<0){alert('Priority must be one of: critical, high, normal, low (or leave blank).');return;}
+    woCall('/maintenance/'+m.id,'PUT',{status:status,notes:notes,priority:priority?priority.trim():null});
   }
 
   // ---- GIS Depot Map (Leaflet + OpenStreetMap) ----
@@ -1357,10 +1381,28 @@
       tr.appendChild(el('td',null,new Date(a.at).toLocaleString('en-GB')));
       var st=el('td');st.appendChild(el('span','state '+a.state,a.state));tr.appendChild(st);
       var ac=el('td');
-      if(a.state==='active'&&canAck){var btn=el('button','mini','Acknowledge');btn.addEventListener('click',async function(){try{await api('/alerts/'+a.id+'/ack',{method:'POST'});renderAlerts();updateBadge();}catch(err){alert(err.message);}});ac.appendChild(btn);}
-      else if(a.acknowledged_by){ac.appendChild(el('span','state','by '+a.acknowledged_by));}
+      if((a.state==='active'||a.state==='resolved')&&canAck){
+        var btn=el('button','mini','Acknowledge');
+        btn.addEventListener('click',async function(){try{await api('/alerts/'+a.id+'/ack',{method:'POST'});renderAlerts();updateBadge();}catch(err){alert(err.message);}});
+        ac.appendChild(btn);
+      }
+      if((a.state==='active'||a.state==='acknowledged'||a.state==='resolved')&&canAck){
+        var cbtn=el('button','mini','Close');
+        cbtn.addEventListener('click',function(){closeAlertPrompt(a);});
+        ac.appendChild(cbtn);
+      }
+      if(a.state==='closed'){ac.appendChild(el('span','state',a.action_taken?('Closed: '+a.action_taken):('by '+(a.closed_by||''))));}
+      else if(a.state==='resolved'){ac.appendChild(el('span','state',a.resolved_reason||'auto-resolved'));}
+      else if(a.acknowledged_by){ac.appendChild(el('span','state','ack by '+a.acknowledged_by));}
       tr.appendChild(ac);tb.appendChild(tr);
     });
+  }
+  function closeAlertPrompt(a){
+    var action=prompt('What was done about this alert? (required — shown in the alert history)\n'+a.message,'');
+    if(action===null)return;
+    if(!action.trim()){alert('An action is required to close an alert.');return;}
+    var reason=prompt('Reason / root cause (optional):','');
+    api('/alerts/'+a.id+'/close',{method:'POST',body:JSON.stringify({action:action,reason:reason||''})}).then(function(){renderAlerts();updateBadge();}).catch(function(err){alert(err.message);});
   }
 
   async function renderAnalytics(){
@@ -1506,7 +1548,16 @@
     var reg=await api('/sensor-registry');var ts=$('#adminSensors');ts.innerHTML='';
     $('#sensorEmpty').style.display=reg.length?'none':'block';
     reg.forEach(function(s){
-      var tr=el('tr');[s.sensor_id,s.coach_id||'—',s.serial_no||'—',s.calibration_date||'—',s.firmware||'—',s.warranty||'—'].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var tr=el('tr');
+      [s.sensor_id,s.coach_id||'—',s.serial_no||'—'].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var calCell=el('td',null,s.calibration_date||'—');
+      if(s.calibration_overdue){calCell.appendChild(document.createTextNode(' '));var b=el('span','badge bad','Overdue '+s.calibration_days_overdue+'d');calCell.appendChild(b);}
+      tr.appendChild(calCell);
+      tr.appendChild(el('td',null,s.firmware||'—'));
+      var wtyCell=el('td',null,s.warranty||'—');
+      if(s.warranty_expired){wtyCell.appendChild(document.createTextNode(' '));wtyCell.appendChild(el('span','badge bad','Expired'));}
+      else if(s.warranty_expiring){wtyCell.appendChild(document.createTextNode(' '));wtyCell.appendChild(el('span','badge warn',s.warranty_days_left+'d left'));}
+      tr.appendChild(wtyCell);
       var ac=el('td');if(!ro)ac.appendChild(mkBtn('Edit',function(){editSensor(s);}));else ac.textContent='—';
       tr.appendChild(ac);ts.appendChild(tr);
     });
@@ -1827,7 +1878,9 @@
       var row=el('tr');
       row.appendChild(el('td',null,sev.replace('_',' ')));
       row.appendChild(el('td',null,(r.channels||[]).indexOf('email')>=0?'✓':'—'));
-      row.appendChild(el('td',null,(r.channels||[]).indexOf('sms')>=0?'✓':'—'));
+      var smsCell=el('td',null,(r.channels||[]).indexOf('sms')>=0?'✓':'—');
+      if(sev==='offline'){smsCell.textContent='— (never)';smsCell.title='Hard rule: offline alerts are email-only, repeating hourly while the outage lasts.';}
+      row.appendChild(smsCell);
       row.appendChild(el('td',null,csv(r.emails)||'—'));
       row.appendChild(el('td',null,csv(r.phones)||'—'));
       row.appendChild(el('td',null,r.escalate_to||'—'));
@@ -1866,7 +1919,9 @@
   }
   function editRule(sev,r){
     var email=confirm('Send EMAIL for '+sev+' alerts? OK=yes Cancel=no');
-    var sms=confirm('Send SMS for '+sev+' alerts? OK=yes Cancel=no');
+    var sms;
+    if(sev==='offline'){sms=false;alert('Offline alerts are EMAIL ONLY by policy (never SMS), and repeat once an hour while a coach stays offline. This is not editable here.');}
+    else sms=confirm('Send SMS for '+sev+' alerts? OK=yes Cancel=no');
     var emails=prompt('Email recipients for '+sev+' (comma separated):',csv(r.emails));if(emails===null)return;
     var phones=prompt('Phone recipients for '+sev+' (comma separated):',csv(r.phones));if(phones===null)return;
     var esc=prompt('Escalate to tier (L1/L2/L3/L4, blank=none):',r.escalate_to||'');
@@ -1916,7 +1971,10 @@
     REPORT_TYPES.forEach(function(rt){
       var tr=el('tr');tr.appendChild(el('td',null,rt[1]));
       var e=el('td');var xb=el('button','mini','⬇ Excel');xb.addEventListener('click',function(){download('/report/'+rt[0]+'/xlsx','raip_'+rt[0]+'.xlsx').catch(function(err){alert(err.message);});});e.appendChild(xb);tr.appendChild(e);
-      var p=el('td');var pb=el('button','mini','🖨 PDF');pb.addEventListener('click',function(){printReport(rt[0]);});p.appendChild(pb);tr.appendChild(p);
+      var p=el('td');
+      var db=el('button','mini','⬇ PDF');db.style.marginRight='6px';db.addEventListener('click',function(){download('/report/'+rt[0]+'/pdf','raip_'+rt[0]+'.pdf').catch(function(err){alert(err.message);});});p.appendChild(db);
+      var pb=el('button','mini','🖨 Print');pb.addEventListener('click',function(){printReport(rt[0]);});p.appendChild(pb);
+      tr.appendChild(p);
       tb.appendChild(tr);
     });
     // historical report coach dropdown (from all coaches in scope)
@@ -2042,7 +2100,21 @@
       sp.style.background='var(--'+(e.score>=80?'ok':e.score>=55?'high':'crit')+'-bg)';sp.style.color='var(--'+(e.score>=80?'ok':e.score>=55?'high':'crit')+')';sc.appendChild(sp);tr.appendChild(sc);
       te.appendChild(tr);
     });
+    var rel=await api('/reliability');var tr2=$('#reliabilityRows');tr2.innerHTML='';
+    if(!rel.coaches.length){var e0=el('tr');var d0=el('td','desc','No alert history yet.');d0.colSpan=7;e0.appendChild(d0);tr2.appendChild(e0);}
+    rel.coaches.forEach(function(c){
+      var row=el('tr');
+      row.appendChild(el('td',null,c.coach_id));
+      row.appendChild(el('td',null,String(c.failures)));
+      row.appendChild(el('td',null,c.mtbf_hours==null?'—':fmtHours(c.mtbf_hours)));
+      row.appendChild(el('td',null,c.mttr_hours==null?'—':fmtHours(c.mttr_hours)));
+      row.appendChild(el('td',null,String(c.resolved_count)));
+      var so=el('td',null,String(c.still_open));if(c.still_open>0)so.style.color='var(--crit)';row.appendChild(so);
+      row.appendChild(el('td',null,c.last_failure_at?new Date(c.last_failure_at).toLocaleString('en-GB'):'—'));
+      tr2.appendChild(row);
+    });
   }
+  function fmtHours(h){if(h<1)return Math.round(h*60)+' min';if(h<48)return h.toFixed(1)+' h';return (h/24).toFixed(1)+' d';}
 
   async function renderAudit(){
     var a=await api('/audit');var tb=$('#auditRows');tb.innerHTML='';
