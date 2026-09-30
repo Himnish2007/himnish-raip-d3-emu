@@ -578,9 +578,9 @@
         <thead><tr><th>Severity</th><th>Email</th><th>SMS</th><th>Email recipients</th><th>Phone recipients</th><th>Escalate to</th><th>After (min)</th><th></th></tr></thead>
         <tbody id="ruleRows"></tbody></table></div>
 
-      <div class="view-head"><h2 style="font-size:14px">Escalation Tiers</h2><span class="desc">L1 Maintenance → L2 Supervisor → L3 Incharge → L4 Railway HQ</span></div>
+      <div class="view-head"><h2 style="font-size:14px">Escalation Tiers</h2><span class="desc">Scoped by coach/EMU: only staff ASSIGNED to that alert's coach and holding the tier's role are escalated to. "Fixed" recipients (optional) see every escalation at that level, fleet-wide.</span></div>
       <div class="panel" style="margin-bottom:18px"><table>
-        <thead><tr><th>Tier</th><th>Name</th><th>Emails</th><th>Phones</th><th></th></tr></thead>
+        <thead><tr><th>Tier</th><th>Name</th><th>Scoped to role</th><th>Fixed emails</th><th>Fixed phones</th><th></th></tr></thead>
         <tbody id="tierRows"></tbody></table></div>
 
       <div class="view-head"><h2 style="font-size:14px">Templates</h2></div>
@@ -1892,7 +1892,9 @@
     var tt=$('#tierRows');tt.innerHTML='';
     Object.keys(cfg.escalation_tiers).forEach(function(k){
       var t=cfg.escalation_tiers[k];var row=el('tr');
-      [k,t.name||'',csv(t.emails)||'—',csv(t.phones)||'—'].forEach(function(v){row.appendChild(el('td',null,v));});
+      [k,t.name||''].forEach(function(v){row.appendChild(el('td',null,v));});
+      row.appendChild(el('td',null,t.role?(ROLE_LABELS[t.role]||t.role):'— (fixed list only)'));
+      [csv(t.emails)||'—',csv(t.phones)||'—'].forEach(function(v){row.appendChild(el('td',null,v));});
       var ac=el('td');if(!ro)ac.appendChild(mkBtn('Edit',function(){editTier(k,t);}));else ac.textContent='—';
       row.appendChild(ac);tt.appendChild(row);
     });
@@ -1932,9 +1934,13 @@
   }
   function editTier(k,t){
     var name=prompt('Name for tier '+k+':',t.name||'');if(name===null)return;
-    var emails=prompt('Tier '+k+' emails (comma separated):',csv(t.emails));if(emails===null)return;
-    var phones=prompt('Tier '+k+' phones (comma separated):',csv(t.phones));if(phones===null)return;
-    var patch={escalation_tiers:{}};patch.escalation_tiers[k]={name:name,emails:arr(emails),phones:arr(phones)};
+    var role=prompt('Scope this tier to a role (recommended): super_admin / railway_hq / depot_admin / maintenance_eng / observer\n\nOnly staff ASSIGNED to the alert\'s own coach/EMU with this role are escalated to — not the whole fleet. Leave blank to use ONLY the fixed list below for every coach.',t.role||'');
+    if(role===null)return;
+    role=role.trim();
+    if(role&&['super_admin','railway_hq','depot_admin','maintenance_eng','observer'].indexOf(role)<0){alert('Role must be one of: super_admin, railway_hq, depot_admin, maintenance_eng, observer (or leave blank).');return;}
+    var emails=prompt('Fixed emails for tier '+k+' — notified for EVERY coach\'s escalation at this level, in ADDITION to the role-scoped staff above (comma separated, usually leave blank):',csv(t.emails));if(emails===null)return;
+    var phones=prompt('Fixed phones for tier '+k+' (comma separated, usually leave blank):',csv(t.phones));if(phones===null)return;
+    var patch={escalation_tiers:{}};patch.escalation_tiers[k]={name:name,role:role||null,emails:arr(emails),phones:arr(phones)};
     adminCallNotify(patch);
   }
   async function adminCallNotify(patch){try{await api('/alert-config',{method:'PUT',body:JSON.stringify(patch)});renderNotify();}catch(e){alert(e.message);}}

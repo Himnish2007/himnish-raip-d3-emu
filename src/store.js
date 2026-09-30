@@ -35,11 +35,16 @@ function defaultAlertConfig() {
       low_battery: blank(['email'], '', 0),
       rapid_rise: blank(['email', 'sms'], 'L3', 5),
     },
+    // "role" (optional) scopes escalation to people ASSIGNED to the alert's own coach/EMU who hold
+    // that role — not the whole fleet. "emails"/"phones" are ADDITIONAL fixed recipients who see
+    // every escalation at that level regardless of coach (e.g. a duty desk) — leave them empty for
+    // pure coach-scoped escalation. Railway HQ is a global role by design (sees every coach already),
+    // so L4 naturally reaches all HQ users without needing per-coach assignment.
     escalation_tiers: {
-      L1: { name: 'Maintenance Engineer', emails: [], phones: [] },
-      L2: { name: 'Depot Supervisor', emails: [], phones: [] },
-      L3: { name: 'Depot Incharge', emails: [], phones: [] },
-      L4: { name: 'Railway HQ', emails: [], phones: [] },
+      L1: { name: 'Maintenance Engineer', role: 'maintenance_eng', emails: [], phones: [] },
+      L2: { name: 'Depot Supervisor', role: 'depot_admin', emails: [], phones: [] },
+      L3: { name: 'Depot Incharge', role: 'depot_admin', emails: [], phones: [] },
+      L4: { name: 'Railway HQ', role: 'railway_hq', emails: [], phones: [] },
     },
     templates: {
       sms: '[EMU-TM ALERT] {severity}: {tm} on {coach} = {temp}C @ {time}',
@@ -576,9 +581,18 @@ class Store {
       if (!rule || !rule.escalate_to || !rule.escalate_after_min) continue;
       if (now - Date.parse(a.at) >= rule.escalate_after_min * 60000) {
         a.escalated = true;
-        const tier = this.alertConfig.escalation_tiers[rule.escalate_to];
-        if (tier) out.push({ alert: a, tier });
-        this.logAudit({ user: 'system', action: 'escalate_alert', detail: `#${a.id} -> ${rule.escalate_to}` });
+        const tierDef = this.alertConfig.escalation_tiers[rule.escalate_to];
+        if (tierDef) {
+          // Coach/EMU-scoped: only people ASSIGNED to this alert's own coach, holding the tier's
+          // role, are escalated to — plus the tier's fixed emails/phones (if any), which are meant
+          // as fleet-wide extras (e.g. a duty desk), not the primary mechanism.
+          const scoped = a.coach_id && tierDef.role ? this.usersForCoach(a.coach_id).filter((u) => u.role === tierDef.role) : [];
+          const tier = { name: tierDef.name,
+            emails: [...new Set([...(tierDef.emails || []), ...scoped.map((u) => u.email).filter(Boolean)])],
+            phones: [...new Set([...(tierDef.phones || []), ...scoped.map((u) => u.phone).filter(Boolean)])] };
+          out.push({ alert: a, tier });
+        }
+        this.logAudit({ user: 'system', action: 'escalate_alert', detail: `#${a.id} -> ${rule.escalate_to}${a.coach_id ? ' (scoped to coach ' + a.coach_id + ')' : ''}` });
       }
     }
     return out;
