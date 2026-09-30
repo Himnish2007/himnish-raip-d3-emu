@@ -1566,7 +1566,7 @@
     $('#depotEmpty').style.display=depots.length?'none':'block';
     depots.forEach(function(dp){
       var tr=el('tr');[dp.depot_id,dp.name,dp.region||'—',dp.lat==null?'—':dp.lat,dp.lng==null?'—':dp.lng,dp.emu_count,dp.coach_count].forEach(function(v){tr.appendChild(el('td',null,v));});
-      var ac=el('td');if(!ro){ac.appendChild(mkBtn('Edit',function(){editDepot(dp);}));ac.appendChild(mkBtn('Delete',function(){if(confirm('Delete depot '+dp.depot_id+'?'))adminCall('/depots/'+dp.depot_id,'DELETE');}));}else ac.textContent='—';
+      var ac=el('td');if(!ro){ac.appendChild(mkBtn('Edit',function(){editDepot(dp);}));ac.appendChild(mkBtn('Escalation',function(){editDepotEscalation(dp);}));ac.appendChild(mkBtn('Delete',function(){if(confirm('Delete depot '+dp.depot_id+'?'))adminCall('/depots/'+dp.depot_id,'DELETE');}));}else ac.textContent='—';
       tr.appendChild(ac);td.appendChild(tr);
     });
     renderSysStatus();
@@ -1613,6 +1613,39 @@
     var lat=prompt('Latitude (optional, for map):',dp?(dp.lat||''):'');
     var lng=prompt('Longitude (optional, for map):',dp?(dp.lng||''):'');
     adminCall('/depots'+(dp?'/'+dp.depot_id:''),dp?'PUT':'POST',{depot_id:id,name:name,region:region,lat:lat,lng:lng});
+  }
+  async function editDepotEscalation(dp){
+    var cur;try{cur=await api('/depots/'+dp.depot_id+'/escalation');}catch(e){alert(e.message);return;}
+    if(!cur.using_fleet_default){
+      var goEdit=confirm('Depot '+dp.depot_id+' HAS its own custom escalation policy (separate from the fleet-wide one).\n\nOK = add/change a severity in it\nCancel = choose to remove it and go back to the fleet-wide default');
+      if(!goEdit){
+        if(confirm('Remove '+dp.depot_id+'\'s custom escalation policy? It will go back to using the SAME fleet-wide policy as every other depot.'))
+          api('/depots/'+dp.depot_id+'/escalation',{method:'DELETE'}).then(function(){alert('Reverted to fleet default for '+dp.depot_id+'.');}).catch(function(e){alert(e.message);});
+        return;
+      }
+    } else {
+      if(!confirm('Depot '+dp.depot_id+' currently uses the SAME fleet-wide escalation policy as every other depot.\n\nSet up its OWN separate escalation policy instead (different timing / different people from other depots)?'))return;
+    }
+    var sev=prompt('Which severity to set for '+dp.depot_id+' only? critical / high / warning / rapid_rise / low_battery\n(Offline is not configurable here — it is always email-only, fleet-wide, see Notify tab.)','critical');
+    if(!sev)return;sev=sev.trim();
+    if(['critical','high','warning','rapid_rise','low_battery'].indexOf(sev)<0){alert('Unknown severity: '+sev);return;}
+    var curRule=(cur.rules&&cur.rules[sev])||{escalate_to:'',escalate_after_min:0};
+    var tierKey=prompt('Escalate '+sev+' alerts on '+dp.depot_id+'\'s coaches to which tier? L1/L2/L3/L4 (blank = no escalation for this depot+severity)',curRule.escalate_to||'');
+    if(tierKey===null)return;tierKey=tierKey.trim();
+    var after=curRule.escalate_after_min||0;
+    if(tierKey){var a=prompt('Escalate after how many minutes (this depot only)?',after||15);if(a===null)return;after=+a||0;}
+    var patch={rules:{}};patch.rules[sev]={escalate_to:tierKey,escalate_after_min:after};
+    if(tierKey){
+      var curTier=(cur.escalation_tiers&&cur.escalation_tiers[tierKey])||{};
+      var name=prompt('Name for tier '+tierKey+' at '+dp.depot_id+':',curTier.name||tierKey);
+      var role=prompt('Escalate to staff holding which role, ASSIGNED to a coach in '+dp.depot_id+'? super_admin / railway_hq / depot_admin / maintenance_eng / observer',curTier.role||'');
+      if(role===null)return;role=role.trim();
+      if(role&&['super_admin','railway_hq','depot_admin','maintenance_eng','observer'].indexOf(role)<0){alert('Role must be one of: super_admin, railway_hq, depot_admin, maintenance_eng, observer (or leave blank).');return;}
+      var emails=prompt('Fixed emails for this depot\'s tier (comma separated, usually blank):',csv(curTier.emails));if(emails===null)return;
+      var phones=prompt('Fixed phones for this depot\'s tier (comma separated, usually blank):',csv(curTier.phones));if(phones===null)return;
+      patch.escalation_tiers={};patch.escalation_tiers[tierKey]={name:name,role:role||null,emails:arr(emails),phones:arr(phones)};
+    }
+    api('/depots/'+dp.depot_id+'/escalation',{method:'PUT',body:JSON.stringify(patch)}).then(function(){alert('Saved: '+dp.depot_id+' now has its own escalation for '+sev+'.');}).catch(function(e){alert(e.message);});
   }
   async function doRestore(ev){
     var file=ev.target.files&&ev.target.files[0];if(!file)return;

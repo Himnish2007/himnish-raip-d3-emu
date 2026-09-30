@@ -68,6 +68,9 @@ class Store {
     this.maintenance = [];         // work orders / service history (persisted)
     this.sensorRegistry = new Map(); // sensor_id -> { serial_no, calibration_date, firmware, warranty, installation_date }
     this.depots = new Map();         // depot_id -> { depot_id, name, region, lat, lng }
+    // depot_id -> { rules: {<severity>: {escalate_to, escalate_after_min}}, escalation_tiers: {L1:{...},...} }
+    // A depot with no entry here simply uses the fleet-wide alertConfig (today's behaviour, unchanged).
+    this.depotEscalation = new Map();
     this.devices = new Map();        // device_id -> field RUT config (self-update)
     this._deviceByKey = new Map();   // per-device api_key -> device (index for ingest auth; rebuilt on load, kept in sync on write)
     this._ingestCount = 0;
@@ -102,6 +105,7 @@ class Store {
     this.maintenance = s.maintenance || [];
     Object.entries(s.sensorRegistry || {}).forEach(([k, v]) => this.sensorRegistry.set(k, v));
     (s.depots || []).forEach((d) => this.depots.set(d.depot_id, d));
+    if (s.depotEscalation) for (const k of Object.keys(s.depotEscalation)) this.depotEscalation.set(k, s.depotEscalation[k]);
     (s.devices || []).forEach((d) => { this.devices.set(d.device_id, d); this._indexDeviceKey(d); });
     if (s.thresholds) this.thresholds = Object.assign(config.defaultThresholds(), s.thresholds);
     if (s.alertConfig) this.alertConfig = Object.assign(defaultAlertConfig(), s.alertConfig);
@@ -194,6 +198,7 @@ class Store {
       maintenance: this.maintenance.slice(0, 5000),
       sensorRegistry: Object.fromEntries(this.sensorRegistry),
       depots: [...this.depots.values()],
+      depotEscalation: Object.fromEntries(this.depotEscalation),
       devices: [...this.devices.values()],
       thresholds: this.thresholds,
       alertConfig: this.alertConfig,
@@ -577,11 +582,18 @@ class Store {
     const now = Date.now();
     for (const a of this.alerts) {
       if (a.state !== 'active' || a.escalated) continue;
-      const rule = this.alertConfig.rules[a.severity];
+      // A depot with its OWN escalation policy uses ITS rule (own escalate_to / escalate_after_min /
+      // tier definitions) instead of the fleet-wide one — so Depot A can escalate critical alerts
+      // after 5 min to its own engineer while Depot B waits 15 min and goes to a different person,
+      // entirely independently. A coach whose depot has no override (or has no depot at all) keeps
+      // using the fleet-wide alertConfig exactly as before.
+      const depotId = a.coach_id ? this.depotOfCoach(a.coach_id) : null;
+      const depotCfg = this.getDepotEscalation(depotId);
+      const rule = (depotCfg && depotCfg.rules[a.severity]) || this.alertConfig.rules[a.severity];
       if (!rule || !rule.escalate_to || !rule.escalate_after_min) continue;
       if (now - Date.parse(a.at) >= rule.escalate_after_min * 60000) {
         a.escalated = true;
-        const tierDef = this.alertConfig.escalation_tiers[rule.escalate_to];
+        const tierDef = (depotCfg && depotCfg.escalation_tiers[rule.escalate_to]) || this.alertConfig.escalation_tiers[rule.escalate_to];
         if (tierDef) {
           // Coach/EMU-scoped: only people ASSIGNED to this alert's own coach, holding the tier's
           // role, are escalated to — plus the tier's fixed emails/phones (if any), which are meant
@@ -592,7 +604,7 @@ class Store {
             phones: [...new Set([...(tierDef.phones || []), ...scoped.map((u) => u.phone).filter(Boolean)])] };
           out.push({ alert: a, tier });
         }
-        this.logAudit({ user: 'system', action: 'escalate_alert', detail: `#${a.id} -> ${rule.escalate_to}${a.coach_id ? ' (scoped to coach ' + a.coach_id + ')' : ''}` });
+        this.logAudit({ user: 'system', action: 'escalate_alert', detail: `#${a.id} -> ${rule.escalate_to}${a.coach_id ? ' (scoped to coach ' + a.coach_id + (depotCfg ? ', depot policy ' + depotId : '') + ')' : ''}` });
       }
     }
     return out;
@@ -697,6 +709,39 @@ class Store {
   // Users who should be notified about an event on a given coach:
   // global-role users (see everything) + users assigned that coach/EMU.
   // Returns only those with a contact method (email/phone).
+  depotOfCoach(coach_id) {
+    const c = this.coaches.get(coach_id);
+    if (!c || !c.emu_id) return null;
+    const e = this.emus.get(c.emu_id);
+    return e ? (e.depot_id || null) : null;
+  }
+  // A depot's own escalation policy, or null if it uses the fleet-wide one (this.alertConfig).
+  getDepotEscalation(depot_id) { return depot_id ? (this.depotEscalation.get(depot_id) || null) : null; }
+  setDepotEscalation(depot_id, patch, actor) {
+    if (!depot_id) throw new Error('depot_id required');
+    if (!this.depots.has(depot_id)) throw new Error('depot not found');
+    const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+    const unsafeKey = (k) => /^__proto__$|^constructor$|^prototype$/.test(k);
+    const cur = this.depotEscalation.get(depot_id) || { rules: {}, escalation_tiers: {} };
+    if (patch.rules) for (const sev of Object.keys(patch.rules)) {
+      if (unsafeKey(sev)) continue;
+      if (!own(cur.rules, sev)) cur.rules[sev] = { escalate_to: '', escalate_after_min: 0 };
+      Object.assign(cur.rules[sev], patch.rules[sev]);
+    }
+    if (patch.escalation_tiers) for (const k of Object.keys(patch.escalation_tiers)) {
+      if (unsafeKey(k)) continue;
+      cur.escalation_tiers[k] = Object.assign(own(cur.escalation_tiers, k) ? cur.escalation_tiers[k] : { name: k }, patch.escalation_tiers[k]);
+    }
+    this.depotEscalation.set(depot_id, cur);
+    this.logAudit({ user: actor, action: 'set_depot_escalation', detail: depot_id });
+    this._persist();
+    return cur;
+  }
+  clearDepotEscalation(depot_id, actor) {
+    this.depotEscalation.delete(depot_id);
+    this.logAudit({ user: actor, action: 'clear_depot_escalation', detail: depot_id + ' (back to fleet default)' });
+    this._persist();
+  }
   usersForCoach(coach_id) {
     const out = [];
     for (const u of this.users.values()) {

@@ -244,6 +244,11 @@ function apiRouter(store, notifier) {
   router.post('/depots', admin, (req, res) => { try { res.json(store.upsertDepot(req.body || {}, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
   router.put('/depots/:id', admin, (req, res) => { try { res.json(store.upsertDepot({ ...req.body, depot_id: req.params.id }, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
   router.delete('/depots/:id', admin, (req, res) => { try { store.deleteDepot(req.params.id, req.user.sub); res.json({ ok: true }); } catch (e) { res.status(400).json({ error: e.message }); } });
+  // A depot's own escalation policy (rules + tiers), independent of the fleet-wide one. A depot with
+  // no override here simply uses the fleet-wide policy from /alert-config, unchanged.
+  router.get('/depots/:id/escalation', requireRole(...GLOBAL), (req, res) => res.json(store.getDepotEscalation(req.params.id) || { rules: {}, escalation_tiers: {}, using_fleet_default: true }));
+  router.put('/depots/:id/escalation', admin, (req, res) => { try { res.json(store.setDepotEscalation(req.params.id, req.body || {}, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
+  router.delete('/depots/:id/escalation', admin, (req, res) => { try { store.clearDepotEscalation(req.params.id, req.user.sub); res.json({ ok: true }); } catch (e) { res.status(400).json({ error: e.message }); } });
 
   // ---- Field device registry (self-updating RUT config), admin ----------
   router.get('/devices-registry', requireRole(...GLOBAL), (req, res) => res.json(store.listDevices()));
