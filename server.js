@@ -61,10 +61,23 @@ async function bootstrap() {
   if (store.db) await store.backfillFromDb(config.BACKFILL_HOURS); // restore live + trends
   await seedDefaults(store);        // ensure a super admin exists (before demo seeding); flags accounts still on the default password
 
+  // Guards EVERY scheduled timer in this file against a runaway loop: if the computed period is
+  // missing, zero, negative or NaN (a config value absent after a partial deploy, a bad .env, or any
+  // future typo), setInterval(fn, NaN) fires the callback almost continuously in Node — which is
+  // exactly what took the server to 100% CPU and wrote 19,000+ backup files in minutes on 30 Sep 2026.
+  // A period below MIN_MS is clamped up to it instead of silently accepted, and the problem is logged
+  // loudly so it is never silent again.
+  function safeInterval(label, fn, ms, minMs) {
+    const min = minMs || 10000;
+    const safe = Number.isFinite(ms) && ms >= min ? ms : min;
+    if (safe !== ms) console.error(`[SECURITY] scheduler "${label}": computed interval was ${ms} (invalid) — using ${safe} ms instead. Check the related config value.`);
+    return setInterval(fn, safe);
+  }
+
   setInterval(() => store.sweepOffline(), 30000);
-  setInterval(() => {
+  safeInterval('escalation-check', () => {
     for (const { alert, tier } of store.dueEscalations()) notifier.sendEscalation(alert, tier, store);
-  }, (config.ESCALATION_INTERVAL || 60) * 1000);
+  }, (config.ESCALATION_INTERVAL || 60) * 1000, 5000);
   // Offline alerts never re-raise while the outage continues (one incident = one active alert row,
   // see store.js _raise), so nothing else would ever re-notify for a coach that stays offline for
   // hours. Check every 5 minutes and re-dispatch email for each still-active offline alert; the
@@ -78,7 +91,7 @@ async function bootstrap() {
   // every BACKUP_INTERVAL_HOURS. Disabled entirely in DEMO_MODE (nothing worth backing up there).
   if (!config.DEMO_MODE) {
     setTimeout(() => store.autoBackup(), 2 * 60000);
-    setInterval(() => store.autoBackup(), config.BACKUP_INTERVAL_HOURS * 3600000);
+    safeInterval('auto-backup', () => store.autoBackup(), config.BACKUP_INTERVAL_HOURS * 3600000, 3600000);
   }
   startPoller(store);
   if (config.DEMO_MODE) startDemo(store);

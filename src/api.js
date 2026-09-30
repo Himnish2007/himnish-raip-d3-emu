@@ -124,11 +124,35 @@ function apiRouter(store, notifier) {
     if (req.query.state) list = list.filter((a) => a.state === req.query.state);
     res.json(list.slice(0, 200));
   });
+  // Full SQL-backed history for one coach (every raise/resolve/ack/close event, not just the current
+  // alert rows) — only available when a real database is attached; otherwise an empty, honest list.
+  router.get('/alert-events', async (req, res) => {
+    const coach = req.query.coach;
+    if (!coach) return res.status(400).json({ error: 'coach query param required' });
+    if (!store.canSeeCoach(req.user, coach)) return res.status(403).json({ error: 'Not in your assigned scope' });
+    if (!store.db) return res.json({ events: [], note: 'No database attached — only the last 5000 in-memory alert rows are available via /alerts.' });
+    const from = req.query.from || new Date(Date.now() - 90 * 86400000).toISOString();
+    const to = req.query.to || new Date().toISOString();
+    try { res.json({ events: await store.db.alertHistoryForCoach(coach, from, to, 1000) }); }
+    catch (e) { res.status(500).json({ error: 'history query failed: ' + e.message }); }
+  });
+  // MTBF/MTTR per coach and fleet-wide, computed from alert history. ?days=90 limits the window
+  // (default: all retained alert history, up to the 5000-row in-memory cap).
+  router.get('/reliability', (req, res) => {
+    const days = req.query.days ? Number(req.query.days) : null;
+    res.json(reports.reliability(store, store.scopeFor(req.user), { days: days && days > 0 ? days : null }));
+  });
   router.post('/alerts/:id/ack', requireRole('super_admin', 'railway_hq', 'depot_admin', 'maintenance_eng'), (req, res) => {
     const al = store.alerts.find((x) => x.id === Number(req.params.id));
     if (!al) return res.status(404).json({ error: 'Alert not found' });
     if (!store.canSeeCoach(req.user, al.coach_id)) return res.status(403).json({ error: 'Not in your assigned scope' });
-    res.json(store.acknowledgeAlert(req.params.id, req.user.sub));
+    try { res.json(store.acknowledgeAlert(req.params.id, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); }
+  });
+  router.post('/alerts/:id/close', requireRole('super_admin', 'railway_hq', 'depot_admin', 'maintenance_eng'), (req, res) => {
+    const al = store.alerts.find((x) => x.id === Number(req.params.id));
+    if (!al) return res.status(404).json({ error: 'Alert not found' });
+    if (!store.canSeeCoach(req.user, al.coach_id)) return res.status(403).json({ error: 'Not in your assigned scope' });
+    try { res.json(store.closeAlert(req.params.id, req.user.sub, req.body || {})); } catch (e) { res.status(400).json({ error: e.message }); }
   });
 
   // ---- Series (scoped) ---------------------------------------------------
@@ -226,6 +250,10 @@ function apiRouter(store, notifier) {
   router.post('/devices-registry', admin, (req, res) => { try { res.json(store.upsertDevice(req.body || {}, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
   router.put('/devices-registry/:id', admin, (req, res) => { try { res.json(store.upsertDevice({ ...req.body, device_id: req.params.id }, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
   router.delete('/devices-registry/:id', admin, (req, res) => { try { store.deleteDevice(req.params.id, req.user.sub); res.json({ ok: true }); } catch (e) { res.status(400).json({ error: e.message }); } });
+  router.post('/devices-registry/:id/rotate-key', admin, (req, res) => {
+    try { res.json(Object.assign({ ok: true, note: 'Shown once. Only needed for a manually-flashed RUT — self-update devices pick up a new key on their own next config pull automatically.' }, store.rotateDeviceKey(req.params.id, req.user.sub))); }
+    catch (e) { res.status(400).json({ error: e.message }); }
+  });
 
   // ---- System status / diagnostics --------------------------------------
   router.get('/system-status', requireRole(...GLOBAL), (req, res) => res.json(store.systemStatus()));
@@ -336,6 +364,18 @@ function apiRouter(store, notifier) {
       res.send(Buffer.from(buf));
     } catch (e) { res.status(400).json({ error: e.message }); }
   });
+  router.get('/report/:type/pdf', async (req, res, next) => {
+    if (req.params.type === 'history') return next();
+    if (!reports.TYPES[req.params.type]) return res.status(400).json({ error: 'unknown report type' });
+    const sensors = scopedSensors(req.user);
+    try {
+      const buf = await reports.toPdf(req.params.type, store, sensors, store.scopeFor(req.user));
+      store.logAudit({ user: req.user.sub, action: 'report_pdf', detail: req.params.type });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="raip_${req.params.type}.pdf"`);
+      res.send(buf);
+    } catch (e) { res.status(400).json({ error: e.message }); }
+  });
   router.get('/report/:type/print', (req, res, next) => {
     if (req.params.type === 'history') return next();
     const sensors = scopedSensors(req.user);
@@ -385,7 +425,8 @@ function apiRouter(store, notifier) {
 
   // ---- Maintenance management (scoped view; edit by admin/depot/eng) -----
   const MAINT = ['super_admin', 'depot_admin', 'maintenance_eng'];
-  router.get('/maintenance', (req, res) => res.json(store.listMaintenance(store.scopeFor(req.user))));
+  router.get('/maintenance', (req, res) => res.json(store.maintenanceWithSla(store.listMaintenance(store.scopeFor(req.user)))));
+  router.get('/maintenance/sla-summary', (req, res) => res.json(store.maintenanceSlaSummary(store.listMaintenance(store.scopeFor(req.user)))));
   router.post('/maintenance', requireRole(...MAINT), (req, res) => {
     try {
       if (!store.canSeeCoach(req.user, (req.body || {}).coach_id)) return res.status(403).json({ error: 'Coach not in your scope' });

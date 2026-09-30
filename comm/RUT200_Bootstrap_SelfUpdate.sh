@@ -34,7 +34,7 @@ flush() {
 
 while true; do
   # ---- pull my config from the dashboard ----
-  CFG=$(curl -s -m 15 "$BASE/api/v1/device-config?device=$DEVICE_ID&key=$BOOTSTRAP_KEY")
+  CFG=$(curl -s -m 15 -H "X-Bootstrap-Key: $BOOTSTRAP_KEY" "$BASE/api/v1/device-config?device=$DEVICE_ID")
   ENABLED=$(echo "$CFG" | sed -n 's/.*"enabled":\([a-z]*\).*/\1/p')
   COACH=$(echo "$CFG"   | sed -n 's/.*"coach_id":"\([^"]*\)".*/\1/p')
   EMU=$(echo "$CFG"     | sed -n 's/.*"emu_id":"\([^"]*\)".*/\1/p')

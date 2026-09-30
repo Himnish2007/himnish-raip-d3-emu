@@ -355,6 +355,13 @@ class Store {
   // BACKUP_KEEP_DAYS (default 14). Runs from server.js on a timer. Failure here (e.g. disk full)
   // is logged but never throws — a backup problem must not take the live app down.
   autoBackup() {
+    // Self-throttle (defense in depth, independent of whatever schedules this call): even if this is
+    // ever invoked far too often — a bad interval, a future code path, anything — it will not write
+    // more than one backup file per minute. This is what actually stops a runaway-timer bug from
+    // filling the disk and pegging the CPU, regardless of where the runaway call is coming from.
+    const now = Date.now();
+    if (this._lastAutoBackupAt && now - this._lastAutoBackupAt < 60000) return null;
+    this._lastAutoBackupAt = now;
     try {
       const dir = config.BACKUP_DIR || path.join(config.DATA_DIR, 'backups');
       fs.mkdirSync(dir, { recursive: true });

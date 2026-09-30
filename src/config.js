@@ -21,6 +21,16 @@ const config = {
   // DATA_DIR to its mount path (e.g. /data) so users/EMUs/coaches survive
   // redeploys. Locally it defaults to ./data.
   DATA_DIR: process.env.DATA_DIR || path.join(__dirname, '..', 'data'),
+  // Automatic scheduled backups (item 19): a full master-data + alert-history snapshot is written
+  // to disk every BACKUP_INTERVAL_HOURS, kept for BACKUP_KEEP_DAYS, then deleted automatically.
+  // This is IN ADDITION TO, not instead of, RDS automated backups / aws_backup.sh.
+  BACKUP_DIR: process.env.BACKUP_DIR || '',   // '' = DATA_DIR/backups
+  BACKUP_INTERVAL_HOURS: Number(process.env.BACKUP_INTERVAL_HOURS) || 24,
+  BACKUP_KEEP_DAYS: Number(process.env.BACKUP_KEEP_DAYS) || 14,
+  // Sensor registry reminders (Admin -> Sensor Registry): how often calibration is expected, and
+  // how many days before a (parseable) warranty date to start flagging it as "expiring".
+  CALIBRATION_INTERVAL_DAYS: Number(process.env.CALIBRATION_INTERVAL_DAYS) || 365,
+  WARRANTY_WARN_DAYS: Number(process.env.WARRANTY_WARN_DAYS) || 60,
 
   // Optional PostgreSQL/TimescaleDB archive. When set, every reading is stored
   // durably and history survives restarts. Unset = in-memory + JSON only.
@@ -40,6 +50,13 @@ const config = {
   DATA_API_KEY: process.env.DATA_API_KEY || 'himnish_emu_key_2025',
   // Shared key a field RUT uses to pull its own config (self-update).
   BOOTSTRAP_KEY: process.env.BOOTSTRAP_KEY || 'himnish_bootstrap_2025',
+  // API docs (/docs, /openapi.json): hidden entirely unless both are set (see requireDocsAuth in server.js).
+  DOCS_USER: process.env.DOCS_USER || '',
+  DOCS_PASSWORD: process.env.DOCS_PASSWORD || '',
+  // Once every field device has migrated off the shared DATA_API_KEY/BOOTSTRAP_KEY to its own
+  // per-device key (see device.api_key in the field-device registry), set this to true so the
+  // server refuses the old shared keys instead of just warning about them.
+  STRICT_SECURITY: String(process.env.STRICT_SECURITY || 'false').toLowerCase() === 'true',
 
   DEMO_MODE: String(process.env.DEMO_MODE || 'false').toLowerCase() === 'true',
 
@@ -82,6 +99,9 @@ const config = {
   SMS_API_BASE: process.env.SMS_API_BASE || 'https://www.fast2sms.com', // override only for testing
   // Do not SMS the same recipient again for the same coach+severity within N minutes (0 = no limit).
   SMS_REPEAT_MIN: num('SMS_REPEAT_MIN', 30),
+  // Safety-net only (see notify.js): the alert engine itself no longer re-raises a sustained fault,
+  // so this should rarely trigger. Higher than SMS_REPEAT_MIN since email has no per-message cost.
+  EMAIL_REPEAT_MIN: num('EMAIL_REPEAT_MIN', 60),
 
   // Escalation scan interval (seconds).
   ESCALATION_INTERVAL: num('ESCALATION_INTERVAL', 60),
