@@ -181,7 +181,7 @@ function createNotifier() {
     // for the same coach+severity within EMAIL_REPEAT_MIN minutes (0 = always send).
     const emailLast = dispatchForAlert.emailLast || (dispatchForAlert.emailLast = new Map());
     const emailSend = async (to) => {
-      const every = (Number(config.EMAIL_REPEAT_MIN) || 0) * 60000;
+      const every = (alert.severity === 'offline' ? (Number(config.OFFLINE_EMAIL_REMINDER_MIN) || 0) : (Number(config.EMAIL_REPEAT_MIN) || 0)) * 60000;
       const ekey = `${alert.severity}|${alert.coach_id || alert.sensor_id}|${to}`;
       const last = emailLast.get(ekey) || 0;
       if (every && Date.now() - last < every) { console.log(`[email] not repeated to ${to} (${ekey.split('|').slice(0, 2).join(' ')}): last sent ${Math.round((Date.now() - last) / 60000)} min ago, limit ${config.EMAIL_REPEAT_MIN} min`); return; }

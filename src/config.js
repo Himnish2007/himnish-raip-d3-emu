@@ -107,6 +107,9 @@ const config = {
   // Safety-net only (see notify.js): the alert engine itself no longer re-raises a sustained fault,
   // so this should rarely trigger. Higher than SMS_REPEAT_MIN since email has no per-message cost.
   EMAIL_REPEAT_MIN: num('EMAIL_REPEAT_MIN', 60),
+  // How often the "still offline" reminder email repeats while an outage continues (separate from
+  // EMAIL_REPEAT_MIN above, which is the general safety net for every other severity).
+  OFFLINE_EMAIL_REMINDER_MIN: num('OFFLINE_EMAIL_REMINDER_MIN', 180),
 
   // Escalation scan interval (seconds).
   ESCALATION_INTERVAL: num('ESCALATION_INTERVAL', 60),

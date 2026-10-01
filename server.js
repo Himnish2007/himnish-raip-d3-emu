@@ -81,9 +81,9 @@ async function bootstrap() {
   // Offline alerts never re-raise while the outage continues (one incident = one active alert row,
   // see store.js _raise), so nothing else would ever re-notify for a coach that stays offline for
   // hours. Check every 5 minutes and re-dispatch email for each still-active offline alert; the
-  // emailSend throttle inside dispatchForAlert (EMAIL_REPEAT_MIN, default 60) is what actually turns
-  // that into "one email now, the next one only after an hour if it is still offline" — SMS is
-  // hard-blocked for this severity in notify.js regardless of what the rule's channels say.
+  // emailSend throttle inside dispatchForAlert (OFFLINE_EMAIL_REMINDER_MIN, default 180 = 3 hours) is
+  // what actually turns that into "one email now, the next one only 3 hours later if still offline" —
+  // SMS only ever fires once (the first, confirmed-genuine dispatch), never on these reminders.
   setInterval(() => {
     for (const alert of store.activeOfflineAlerts()) notifier.dispatchForAlert(alert, store, { isReminder: true }).catch(() => {});
   }, 5 * 60000);
