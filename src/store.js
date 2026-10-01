@@ -35,7 +35,7 @@ function defaultAlertConfig() {
       warning: rule(['email'], [step('L2', 30)]),
       high: rule(['email', 'sms'], [step('L1', 15), step('L2', 30), step('L3', 60)]),
       critical: rule(['email', 'sms'], [step('L1', 5), step('L2', 15), step('L3', 30), step('L4', 60)]),
-      offline: rule(['email'], []),
+      offline: rule(['email', 'sms'], []),
       low_battery: rule(['email'], []),
       rapid_rise: rule(['email', 'sms'], [step('L1', 5), step('L2', 15), step('L3', 30)]),
     },
@@ -230,7 +230,7 @@ class Store {
   // ===== Thresholds =======================================================
   getThresholds() { return this.thresholds; }
   setThresholds(patch, user) {
-    const keys = ['CFG_WARN_TEMP', 'CFG_HIGH_TEMP', 'CFG_CRIT_TEMP', 'CFG_OFFLINE_SECONDS', 'CFG_LOW_BATTERY', 'CFG_RISE_RATE', 'CFG_LOG_INTERVAL', 'CFG_DB_LOG_INTERVAL'];
+    const keys = ['CFG_WARN_TEMP', 'CFG_HIGH_TEMP', 'CFG_CRIT_TEMP', 'CFG_OFFLINE_SECONDS', 'CFG_OFFLINE_ALERT_SECONDS', 'CFG_LOW_BATTERY', 'CFG_RISE_RATE', 'CFG_LOG_INTERVAL', 'CFG_DB_LOG_INTERVAL'];
     // validate on a copy first so a bad request can never leave live thresholds half-applied
     const next = Object.assign({}, this.thresholds);
     for (const k of keys) if (patch[k] != null && Number.isFinite(Number(patch[k]))) next[k] = Number(patch[k]);
@@ -238,6 +238,7 @@ class Store {
     if (!(next.CFG_DB_LOG_INTERVAL >= 0)) next.CFG_DB_LOG_INTERVAL = 0;
     if (!(next.CFG_WARN_TEMP < next.CFG_HIGH_TEMP && next.CFG_HIGH_TEMP < next.CFG_CRIT_TEMP)) throw new Error('Temperature limits must satisfy Warning < High < Critical');
     if (!(next.CFG_OFFLINE_SECONDS >= 30)) throw new Error('Offline after must be at least 30 seconds');
+    if (!(next.CFG_OFFLINE_ALERT_SECONDS >= next.CFG_OFFLINE_SECONDS)) throw new Error('Offline alert delay must be at least as long as "Offline after" (dashboard status)');
     if (!(next.CFG_LOW_BATTERY >= 0 && next.CFG_LOW_BATTERY <= 100)) throw new Error('Low battery % must be between 0 and 100');
     if (!(next.CFG_RISE_RATE > 0)) throw new Error('Rapid rise must be greater than 0');
     Object.assign(this.thresholds, next);
@@ -247,17 +248,7 @@ class Store {
   }
 
   // ===== Alert config (SMS/Email routing, escalation, templates) ==========
-  getAlertConfig() {
-    // Defensive normalisation, not just at dispatch time: SMS is a hard-disabled channel for the
-    // "offline" severity (see notify.js), so the admin screen must never show it as ticked — even for
-    // a config saved before this rule existed. This never mutates the stored config, only the view.
-    const cfg = this.alertConfig;
-    if (cfg.rules && cfg.rules.offline && (cfg.rules.offline.channels || []).includes('sms')) {
-      return Object.assign({}, cfg, { rules: Object.assign({}, cfg.rules, {
-        offline: Object.assign({}, cfg.rules.offline, { channels: cfg.rules.offline.channels.filter((c) => c !== 'sms') }) }) });
-    }
-    return cfg;
-  }
+  getAlertConfig() { return this.alertConfig; }
   // Currently-active "offline" alerts — used by the hourly offline-reminder timer in server.js.
   activeOfflineAlerts() { return this.alerts.filter((a) => a.severity === 'offline' && a.state === 'active'); }
   setAlertConfig(patch, user) {
@@ -1087,25 +1078,31 @@ class Store {
 
   sweepOffline() {
     const t = this.getThresholds();
-    const cutoff = Date.now() - t.CFG_OFFLINE_SECONDS * 1000;
-    const wentOffline = new Map(); // coach_id -> sensors that just went offline in this sweep
+    const statusCutoff = Date.now() - t.CFG_OFFLINE_SECONDS * 1000;          // dashboard online/offline badge: instant, unchanged
+    const alertCutoff = Date.now() - t.CFG_OFFLINE_ALERT_SECONDS * 1000;     // email/SMS: only once GENUINELY sustained
+    const dueForAlert = new Map(); // coach_id -> sensors whose outage has now crossed the ALERT threshold
     for (const s of this.sensors.values()) {
       const wasOnline = s.status === 'online';
-      if (Date.parse(s.last_update) < cutoff) {
+      if (Date.parse(s.last_update) < statusCutoff) {
+        if (wasOnline) s.offline_since = s.last_update;   // dashboard flips now; remember when THIS outage actually started
         s.status = 'offline';
-        if (wasOnline) {
-          const key = s.coach_id || ('sensor:' + s.sensor_id);
-          if (!wentOffline.has(key)) wentOffline.set(key, []);
-          wentOffline.get(key).push(s);
-        }
+      }
+      // A brief signal drop / power blip that recovers before CFG_OFFLINE_ALERT_SECONDS never reaches
+      // here at all (the sensor goes back online and a fresh reading replaces this object entirely,
+      // clearing offline_since/offline_alerted) — so no email/SMS is ever sent for it.
+      if (s.status === 'offline' && s.offline_since && !s.offline_alerted && Date.parse(s.offline_since) <= alertCutoff) {
+        s.offline_alerted = true;
+        const key = s.coach_id || ('sensor:' + s.sensor_id);
+        if (!dueForAlert.has(key)) dueForAlert.set(key, []);
+        dueForAlert.get(key).push(s);
       }
     }
     // ONE offline alert per coach (not one per motor sensor -> no 4 duplicate emails/SMS).
-    for (const list of wentOffline.values()) {
+    for (const list of dueForAlert.values()) {
       const first = list[0];
       const coachId = first.coach_id;
       if (coachId) {
-        // straggler guard: a sibling sensor of the same coach crossing the cutoff in the
+        // straggler guard: a sibling sensor of the same coach crossing the alert threshold in the
         // very next sweep must not raise a second alert for the same outage.
         const dup = this.alerts.find((x) => x.severity === 'offline' && x.coach_id === coachId &&
           x.state === 'active' && (Date.now() - Date.parse(x.at)) < 120000);
@@ -1113,13 +1110,14 @@ class Store {
       }
       const tms = list.map((x) => x.tm_id || x.sensor_id).sort().join(', ');
       let message;
+      const mins = Math.round(t.CFG_OFFLINE_ALERT_SECONDS / 60);
       if (!coachId) {
-        message = `Sensor ${first.sensor_id} offline (no data > ${t.CFG_OFFLINE_SECONDS}s)`;
+        message = `Sensor ${first.sensor_id} offline for over ${mins} min (no data since ${first.offline_since})`;
       } else {
         const total = this.allSensors().filter((x) => x.coach_id === coachId).length;
         message = list.length >= total
-          ? `Coach ${coachId} offline - all ${total} sensors (${tms}) sent no data > ${t.CFG_OFFLINE_SECONDS}s`
-          : `Coach ${coachId}: ${list.length} of ${total} sensors offline (${tms}) - no data > ${t.CFG_OFFLINE_SECONDS}s`;
+          ? `Coach ${coachId} offline for over ${mins} min - all ${total} sensors (${tms})`
+          : `Coach ${coachId}: ${list.length} of ${total} sensors offline for over ${mins} min (${tms})`;
       }
       this._raise({ severity: 'offline', sensor_id: first.sensor_id, coach_id: coachId,
         emu_id: first.emu_id, tm_id: coachId ? tms : first.tm_id, message });

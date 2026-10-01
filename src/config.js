@@ -68,6 +68,11 @@ const config = {
   CFG_HIGH_TEMP: num('CFG_HIGH_TEMP', 80),
   CFG_CRIT_TEMP: num('CFG_CRIT_TEMP', 90),
   CFG_OFFLINE_SECONDS: num('CFG_OFFLINE_SECONDS', 300),
+  // How long a coach must STAY offline before an alert (email/SMS) is actually sent — separate from
+  // and longer than CFG_OFFLINE_SECONDS above (which only controls the dashboard's online/offline
+  // status, shown instantly). A brief signal drop or power blip that recovers within this window
+  // never generates an alert at all — only a genuinely sustained outage does.
+  CFG_OFFLINE_ALERT_SECONDS: num('CFG_OFFLINE_ALERT_SECONDS', 1800),
   CFG_LOW_BATTERY: num('CFG_LOW_BATTERY', 20),
   CFG_RETENTION_DAYS: num('CFG_RETENTION_DAYS', 1825),
   // Default data-log / poll interval (seconds) — admin-editable in Thresholds tab.
@@ -135,6 +140,7 @@ config.defaultThresholds = function () {
   return {
     CFG_WARN_TEMP: config.CFG_WARN_TEMP, CFG_HIGH_TEMP: config.CFG_HIGH_TEMP,
     CFG_CRIT_TEMP: config.CFG_CRIT_TEMP, CFG_OFFLINE_SECONDS: config.CFG_OFFLINE_SECONDS,
+    CFG_OFFLINE_ALERT_SECONDS: config.CFG_OFFLINE_ALERT_SECONDS,
     CFG_LOW_BATTERY: config.CFG_LOW_BATTERY,
     CFG_RISE_RATE: num('CFG_RISE_RATE', 3), // deg C per minute -> rapid-rise alert
     CFG_LOG_INTERVAL: config.CFG_LOG_INTERVAL, // seconds — device push / poll interval

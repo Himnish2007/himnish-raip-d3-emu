@@ -85,7 +85,7 @@ async function bootstrap() {
   // that into "one email now, the next one only after an hour if it is still offline" — SMS is
   // hard-blocked for this severity in notify.js regardless of what the rule's channels say.
   setInterval(() => {
-    for (const alert of store.activeOfflineAlerts()) notifier.dispatchForAlert(alert, store).catch(() => {});
+    for (const alert of store.activeOfflineAlerts()) notifier.dispatchForAlert(alert, store, { isReminder: true }).catch(() => {});
   }, 5 * 60000);
   // Automatic backups: first one 2 minutes after boot (so it never competes with startup), then
   // every BACKUP_INTERVAL_HOURS. Disabled entirely in DEMO_MODE (nothing worth backing up there).

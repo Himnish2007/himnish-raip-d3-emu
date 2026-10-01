@@ -133,7 +133,8 @@ function createNotifier() {
   }
 
   // Dispatch one alert through its configured rule.
-  async function dispatchForAlert(alert, store) {
+  async function dispatchForAlert(alert, store, opts) {
+    opts = opts || {};
     const cfg = store.getAlertConfig();
     const rule = cfg.rules[alert.severity];
     if (!rule) return;
@@ -145,11 +146,13 @@ function createNotifier() {
     const sms = alert.severity === 'offline'
       ? fill(cfg.templates.sms_offline || '[EMU-TM ALERT] {severity}: {message} @ {time}', ctx)
       : fill(cfg.templates.sms, ctx);
-    // HARD RULE (not admin-configurable): an offline TM/coach is a communication problem, not
-    // necessarily a hazard, and stays "active" for as long as the outage lasts — so it must never
-    // spam SMS. Email only, and only once an hour while it persists (see the offline-reminder timer
-    // in server.js, which relies on the emailSend throttle below for that hourly cadence).
-    const channels = (rule.channels || []).filter((c) => !(c === 'sms' && alert.severity === 'offline'));
+    // After the 30-min "genuinely still offline" confirmation in sweepOffline(), an offline alert is
+    // sent on whatever channels the admin configured for it (email and/or SMS), same as any other
+    // severity — no special-case blocking. The confirmation window itself is what prevents a brief
+    // signal drop or power blip from ever reaching here at all. SMS fires only on this FIRST,
+    // confirmed-genuine dispatch though: the hourly "still offline" reminder (opts.isReminder, from
+    // the timer in server.js) is email-only, so a prolonged outage costs one SMS, not one every hour.
+    const channels = (rule.channels || []).filter((c) => !(c === 'sms' && alert.severity === 'offline' && opts.isReminder));
     const dltPayload = dlt.build(alert, false);
     // SMS costs money and a sensor that stays hot re-raises its alert every minute: send the same
     // recipient / coach / severity again only after SMS_REPEAT_MIN minutes (0 = always send).
@@ -211,9 +214,12 @@ function createNotifier() {
     const subject = '[ESCALATION] ' + fill(cfg.templates.email_subject, ctx);
     const body = 'ESCALATED (' + (tier.name || '') + ')\n' + fill(cfg.templates.email_body, ctx);
     for (const to of (tier.emails || [])) await sendEmail(to, subject, body, store);
-    // Same hard rule as the main dispatch: offline never sends SMS, escalation included.
-    if (alert.severity === 'offline') return;
-    const sms = 'ESCALATED: ' + fill(cfg.templates.sms, ctx);
+    // Offline uses its own message-based SMS text (no temperature value to show), same as the main
+    // dispatch path above — not blocked: after the 30-min confirmation window, escalation SMS is
+    // allowed for offline exactly like any other severity.
+    const sms = 'ESCALATED: ' + (alert.severity === 'offline'
+      ? fill(cfg.templates.sms_offline || '[EMU-TM ALERT] {severity}: {message} @ {time}', ctx)
+      : fill(cfg.templates.sms, ctx));
     const escPayload = dlt.build(alert, true);
     for (const to of (tier.phones || [])) await sendSMS(to, sms, store, escPayload);
   }

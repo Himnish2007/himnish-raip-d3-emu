@@ -496,7 +496,8 @@
           <div class="f"><label>Warning &gt; °C</label><input class="inp" id="thWarn" type="number" style="width:110px"></div>
           <div class="f"><label>High &gt; °C</label><input class="inp" id="thHigh" type="number" style="width:110px"></div>
           <div class="f"><label>Critical &gt; °C</label><input class="inp" id="thCrit" type="number" style="width:110px"></div>
-          <div class="f"><label>Offline after (s)</label><input class="inp" id="thOff" type="number" style="width:120px"></div>
+          <div class="f"><label>Offline after (s)</label><input class="inp" id="thOff" type="number" style="width:120px" title="Dashboard status only: how soon a silent sensor shows OFFLINE on screen."></div>
+          <div class="f"><label>Offline alert delay (s)</label><input class="inp" id="thOffAlert" type="number" style="width:120px" title="Email alert only (never SMS): a brief signal drop that recovers before this many seconds never sends an email at all. Must be ≥ Offline after."></div>
           <div class="f"><label>Low battery ≤ %</label><input class="inp" id="thBat" type="number" style="width:120px"></div>
           <div class="f"><label>Rapid rise ≥ °C/min</label><input class="inp" id="thRise" type="number" step="0.5" style="width:130px"></div>
           <div class="f"><label>Device push interval (s)</label><input class="inp" id="thLog" type="number" min="5" style="width:150px"></div>
@@ -1488,7 +1489,7 @@
     // thresholds
     var th=await api('/thresholds');
     $('#thWarn').value=th.CFG_WARN_TEMP;$('#thHigh').value=th.CFG_HIGH_TEMP;$('#thCrit').value=th.CFG_CRIT_TEMP;
-    $('#thOff').value=th.CFG_OFFLINE_SECONDS;$('#thBat').value=th.CFG_LOW_BATTERY;$('#thRise').value=th.CFG_RISE_RATE!=null?th.CFG_RISE_RATE:3;
+    $('#thOff').value=th.CFG_OFFLINE_SECONDS;$('#thOffAlert').value=th.CFG_OFFLINE_ALERT_SECONDS!=null?th.CFG_OFFLINE_ALERT_SECONDS:1800;$('#thBat').value=th.CFG_LOW_BATTERY;$('#thRise').value=th.CFG_RISE_RATE!=null?th.CFG_RISE_RATE:3;
     $('#thLog').value=th.CFG_LOG_INTERVAL!=null?th.CFG_LOG_INTERVAL:20;
     $('#thDbLog').value=th.CFG_DB_LOG_INTERVAL!=null?th.CFG_DB_LOG_INTERVAL:600;
     ['thWarn','thHigh','thCrit','thOff','thBat','thRise','thLog','thDbLog'].forEach(function(id){$('#'+id).disabled=ro;});
@@ -1687,7 +1688,7 @@
 
   async function saveThresholds(){
     var body={CFG_WARN_TEMP:+$('#thWarn').value,CFG_HIGH_TEMP:+$('#thHigh').value,CFG_CRIT_TEMP:+$('#thCrit').value,
-      CFG_OFFLINE_SECONDS:+$('#thOff').value,CFG_LOW_BATTERY:+$('#thBat').value,CFG_RISE_RATE:+$('#thRise').value,
+      CFG_OFFLINE_SECONDS:+$('#thOff').value,CFG_OFFLINE_ALERT_SECONDS:+$('#thOffAlert').value,CFG_LOW_BATTERY:+$('#thBat').value,CFG_RISE_RATE:+$('#thRise').value,
       CFG_LOG_INTERVAL:Math.max(5,+$('#thLog').value||20),
       CFG_DB_LOG_INTERVAL:Math.max(0,+$('#thDbLog').value||0)};
     try{await api('/thresholds',{method:'PUT',body:JSON.stringify(body)});THRESH_CACHE=null;$('#thSave').textContent='Saved ✓';setTimeout(function(){$('#thSave').textContent='Save thresholds';},1500);}
@@ -1915,7 +1916,6 @@
       row.appendChild(el('td',null,sev.replace('_',' ')));
       row.appendChild(el('td',null,(r.channels||[]).indexOf('email')>=0?'✓':'—'));
       var smsCell=el('td',null,(r.channels||[]).indexOf('sms')>=0?'✓':'—');
-      if(sev==='offline'){smsCell.textContent='— (never)';smsCell.title='Hard rule: offline alerts are email-only, repeating hourly while the outage lasts.';}
       row.appendChild(smsCell);
       row.appendChild(el('td',null,csv(r.emails)||'—'));
       row.appendChild(el('td',null,csv(r.phones)||'—'));
@@ -1979,7 +1979,7 @@
   function editRule(sev,r){
     var email=confirm('Send EMAIL for '+sev+' alerts? OK=yes Cancel=no');
     var sms;
-    if(sev==='offline'){sms=false;alert('Offline alerts are EMAIL ONLY by policy (never SMS), and repeat once an hour while a coach stays offline. This is not editable here.');}
+    if(sev==='offline')sms=confirm('Send SMS for offline alerts (after the "Offline alert delay" in Thresholds confirms it is a genuine, sustained outage — not a brief signal drop)? OK=yes Cancel=no\n\nEither way: hourly "still offline" reminders are EMAIL ONLY, never SMS, to control cost.');
     else sms=confirm('Send SMS for '+sev+' alerts? OK=yes Cancel=no');
     var emails=prompt('Email recipients for '+sev+' (comma separated):',csv(r.emails));if(emails===null)return;
     var phones=prompt('Phone recipients for '+sev+' (comma separated):',csv(r.phones));if(phones===null)return;
