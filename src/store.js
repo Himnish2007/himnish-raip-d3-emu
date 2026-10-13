@@ -2,8 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const pw = require('./password');
+const bcrypt = require('bcryptjs');
 const config = require('./config');
 
 // ---------------------------------------------------------------------------
@@ -24,31 +23,22 @@ const MAX_SERIES = 2000;
 
 // Default fully-configurable alert routing (admin edits at runtime, persisted).
 function defaultAlertConfig() {
-  // "escalation" is an ORDERED chain through all 4 levels: L1 fires first (if still unacknowledged),
-  // then L2 later, then L3, then L4 — each independently timed (minutes since the alert was raised).
-  // A level with after_min 0 is skipped for that severity. Escalation stops the moment someone
-  // acknowledges the alert (state leaves 'active'), at whatever level it had reached.
-  const rule = (channels, chain) => ({ channels, emails: [], phones: [], escalation: chain || [] });
-  const step = (tier, after_min) => ({ tier, after_min });
+  const blank = (channels, esc, after) => ({ channels, emails: [], phones: [],
+    escalate_to: esc || '', escalate_after_min: after || 0 });
   return {
     rules: {
-      warning: rule(['email'], [step('L2', 30)]),
-      high: rule(['email', 'sms'], [step('L1', 15), step('L2', 30), step('L3', 60)]),
-      critical: rule(['email', 'sms'], [step('L1', 5), step('L2', 15), step('L3', 30), step('L4', 60)]),
-      offline: rule(['email', 'sms'], []),
-      low_battery: rule(['email'], []),
-      rapid_rise: rule(['email', 'sms'], [step('L1', 5), step('L2', 15), step('L3', 30)]),
+      warning: blank(['email'], 'L2', 30),
+      high: blank(['email', 'sms'], 'L3', 15),
+      critical: blank(['email', 'sms'], 'L4', 5),
+      offline: blank(['email'], '', 0),
+      low_battery: blank(['email'], '', 0),
+      rapid_rise: blank(['email', 'sms'], 'L3', 5),
     },
-    // "role" (optional) scopes escalation to people ASSIGNED to the alert's own coach/EMU who hold
-    // that role — not the whole fleet. "emails"/"phones" are ADDITIONAL fixed recipients who see
-    // every escalation at that level regardless of coach (e.g. a duty desk) — leave them empty for
-    // pure coach-scoped escalation. Railway HQ is a global role by design (sees every coach already),
-    // so L4 naturally reaches all HQ users without needing per-coach assignment.
     escalation_tiers: {
-      L1: { name: 'Maintenance Engineer', role: 'maintenance_eng', emails: [], phones: [] },
-      L2: { name: 'Depot Supervisor', role: 'depot_admin', emails: [], phones: [] },
-      L3: { name: 'Depot Incharge', role: 'depot_admin', emails: [], phones: [] },
-      L4: { name: 'Railway HQ', role: 'railway_hq', emails: [], phones: [] },
+      L1: { name: 'Maintenance Engineer', emails: [], phones: [] },
+      L2: { name: 'Depot Supervisor', emails: [], phones: [] },
+      L3: { name: 'Depot Incharge', emails: [], phones: [] },
+      L4: { name: 'Railway HQ', emails: [], phones: [] },
     },
     templates: {
       sms: '[EMU-TM ALERT] {severity}: {tm} on {coach} = {temp}C @ {time}',
@@ -72,21 +62,17 @@ class Store {
     this.maintenance = [];         // work orders / service history (persisted)
     this.sensorRegistry = new Map(); // sensor_id -> { serial_no, calibration_date, firmware, warranty, installation_date }
     this.depots = new Map();         // depot_id -> { depot_id, name, region, lat, lng }
-    // depot_id -> { rules: {<severity>: {escalate_to, escalate_after_min}}, escalation_tiers: {L1:{...},...} }
-    // A depot with no entry here simply uses the fleet-wide alertConfig (today's behaviour, unchanged).
-    this.depotEscalation = new Map();
     this.devices = new Map();        // device_id -> field RUT config (self-update)
-    this._deviceByKey = new Map();   // per-device api_key -> device (index for ingest auth; rebuilt on load, kept in sync on write)
     this._ingestCount = 0;
     this._startedAt = Date.now();
     this.thresholds = config.defaultThresholds();
     this.alertConfig = defaultAlertConfig();
+    this.smtpSettings = null;      // dashboard override of SMTP creds (Super Admin), else use server .env
     // ---- in-memory (live) ----
     this.sensors = new Map();      // sensor_id -> meta + latest reading
     this.series = new Map();       // sensor_id -> [{ t, temperature }]
     this.alerts = [];
     this.audit = [];
-    this.secLog = [];              // sign-in / security events (kept across restarts, last 500)
     this.notifications = [];       // SMS/email delivery log, newest first
     this.comm = new Map();         // coach_id -> live comm telemetry (rssi, packet_loss, lte...)
     this._notifier = null;         // server sets: fn(alert) => dispatch
@@ -109,18 +95,10 @@ class Store {
     this.maintenance = s.maintenance || [];
     Object.entries(s.sensorRegistry || {}).forEach(([k, v]) => this.sensorRegistry.set(k, v));
     (s.depots || []).forEach((d) => this.depots.set(d.depot_id, d));
-    if (s.depotEscalation) for (const k of Object.keys(s.depotEscalation)) this.depotEscalation.set(k, s.depotEscalation[k]);
-    (s.devices || []).forEach((d) => { this.devices.set(d.device_id, d); this._indexDeviceKey(d); });
+    (s.devices || []).forEach((d) => this.devices.set(d.device_id, d));
     if (s.thresholds) this.thresholds = Object.assign(config.defaultThresholds(), s.thresholds);
     if (s.alertConfig) this.alertConfig = Object.assign(defaultAlertConfig(), s.alertConfig);
-    if (Array.isArray(s.audit) && !this.audit.length) this.audit = s.audit;
-    if (Array.isArray(s.secLog) && !this.secLog.length) this.secLog = s.secLog;
-    // Alerts used to live in memory only and vanished on every restart/redeploy, silently losing
-    // active/unacknowledged alerts and all acknowledgement history. Now restored like everything else.
-    if (Array.isArray(s.alerts) && !this.alerts.length) this.alerts = s.alerts;
-    if (Array.isArray(s.notifications) && !this.notifications.length) this.notifications = s.notifications;
-    if (s.alertSeq) this._alertSeq = Math.max(this._alertSeq, s.alertSeq);
-    for (const a of this.alerts) if (a.id >= this._alertSeq) this._alertSeq = a.id + 1;   // never reuse an id even if alertSeq was stale
+    if (s.smtpSettings) this.smtpSettings = s.smtpSettings;
   }
 
   // Load master data. Prefers the DB state blob (most durable) when a DB is
@@ -146,33 +124,24 @@ class Store {
     if (!this.db) return;
     try {
       const latest = await this.db.latestPerSensor();
-      const offlineCut = Date.now() - this.getThresholds().CFG_OFFLINE_SECONDS * 1000;
-      let skipped = 0;
       for (const r of latest) {
-        // A coach the admin deleted is gone from master data but its readings stay in the DB (history is kept).
-        // Never rebuild live sensors for it, or the deleted coach re-appears on every restart/redeploy.
-        if (r.coach_id && !this.coaches.has(r.coach_id)) { skipped++; continue; }
-        const lastUpdate = new Date(r.ts).toISOString();
         this.sensors.set(r.sensor_id, {
           sensor_id: r.sensor_id, tm_id: r.tm_id, coach_id: r.coach_id, emu_id: r.emu_id,
           temperature: r.temperature == null ? null : Number(r.temperature),
           battery_health: r.battery == null ? null : Number(r.battery),
           signal_strength: r.signal == null ? null : Number(r.signal),
-          // Already stale at startup -> restore as offline (silently) so a redeploy does not re-send
-          // "offline" alerts/emails for coaches that were offline before the restart.
-          sensor_type: 'wireless', status: Date.parse(lastUpdate) < offlineCut ? 'offline' : 'online', last_update: lastUpdate,
+          sensor_type: 'wireless', status: 'online', last_update: new Date(r.ts).toISOString(),
         });
       }
       const since = new Date(Date.now() - (hours || 6) * 3600 * 1000).toISOString();
       const rows = await this.db.recentSeries(since, 200000);
       for (const row of rows) {
-        if (!this.sensors.has(row.sensor_id)) continue;   // skipped (deleted coach) or unknown sensor
         const buf = this.series.get(row.sensor_id) || [];
         buf.push({ t: new Date(row.ts).toISOString(), temperature: row.temperature == null ? null : Number(row.temperature) });
         if (buf.length > MAX_SERIES) buf.shift();
         this.series.set(row.sensor_id, buf);
       }
-      console.log(`[store] backfilled ${latest.length - skipped} sensors and ${rows.length} samples from PostgreSQL` + (skipped ? ` (skipped ${skipped} sensor(s) of deleted coaches)` : ''));
+      console.log(`[store] backfilled ${latest.length} sensors and ${rows.length} samples from PostgreSQL`);
     } catch (e) {
       console.error('[store] backfill failed:', e.message);
     }
@@ -181,14 +150,6 @@ class Store {
   _persist() {
     clearTimeout(this._saveTimer);
     this._saveTimer = setTimeout(() => this.flushSync(), 200);
-  }
-  // For frequent, low-value changes (a device's "last seen" time): save at most every 5 minutes.
-  // With 2000 field devices pulling config every 5 min, an immediate full save would rewrite ~1 MB
-  // several times per second. A restart/shutdown still saves everything (flushSync on SIGTERM).
-  _persistSlow() {
-    if (this._slowTimer) return;
-    this._slowTimer = setTimeout(() => { this._slowTimer = null; this.flushSync(); }, 5 * 60 * 1000);
-    if (this._slowTimer.unref) this._slowTimer.unref();
   }
 
   _snapshot() {
@@ -202,15 +163,10 @@ class Store {
       maintenance: this.maintenance.slice(0, 5000),
       sensorRegistry: Object.fromEntries(this.sensorRegistry),
       depots: [...this.depots.values()],
-      depotEscalation: Object.fromEntries(this.depotEscalation),
       devices: [...this.devices.values()],
       thresholds: this.thresholds,
       alertConfig: this.alertConfig,
-      audit: this.audit.slice(0, 1500),
-      secLog: this.secLog.slice(0, 500),
-      alerts: this.alerts.slice(0, 5000),
-      notifications: this.notifications.slice(0, 2000),
-      alertSeq: this._alertSeq,
+      smtpSettings: this.smtpSettings,
     };
   }
 
@@ -219,7 +175,7 @@ class Store {
     try {
       fs.mkdirSync(config.DATA_DIR, { recursive: true });
       const tmp = this._file + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(snapshot), { mode: 0o600 });   // contains password hashes: owner-only file // compact: ~35% smaller and faster than pretty-printed
+      fs.writeFileSync(tmp, JSON.stringify(snapshot, null, 2));
       fs.renameSync(tmp, this._file); // atomic
     } catch (e) {
       console.error('[store] persist failed:', e.message);
@@ -230,18 +186,9 @@ class Store {
   // ===== Thresholds =======================================================
   getThresholds() { return this.thresholds; }
   setThresholds(patch, user) {
-    const keys = ['CFG_WARN_TEMP', 'CFG_HIGH_TEMP', 'CFG_CRIT_TEMP', 'CFG_OFFLINE_SECONDS', 'CFG_OFFLINE_ALERT_SECONDS', 'CFG_LOW_BATTERY', 'CFG_RISE_RATE', 'CFG_LOG_INTERVAL', 'CFG_DB_LOG_INTERVAL'];
-    // validate on a copy first so a bad request can never leave live thresholds half-applied
-    const next = Object.assign({}, this.thresholds);
-    for (const k of keys) if (patch[k] != null && Number.isFinite(Number(patch[k]))) next[k] = Number(patch[k]);
-    if (next.CFG_LOG_INTERVAL < 5) next.CFG_LOG_INTERVAL = 5;
-    if (!(next.CFG_DB_LOG_INTERVAL >= 0)) next.CFG_DB_LOG_INTERVAL = 0;
-    if (!(next.CFG_WARN_TEMP < next.CFG_HIGH_TEMP && next.CFG_HIGH_TEMP < next.CFG_CRIT_TEMP)) throw new Error('Temperature limits must satisfy Warning < High < Critical');
-    if (!(next.CFG_OFFLINE_SECONDS >= 30)) throw new Error('Offline after must be at least 30 seconds');
-    if (!(next.CFG_OFFLINE_ALERT_SECONDS >= next.CFG_OFFLINE_SECONDS)) throw new Error('Offline alert delay must be at least as long as "Offline after" (dashboard status)');
-    if (!(next.CFG_LOW_BATTERY >= 0 && next.CFG_LOW_BATTERY <= 100)) throw new Error('Low battery % must be between 0 and 100');
-    if (!(next.CFG_RISE_RATE > 0)) throw new Error('Rapid rise must be greater than 0');
-    Object.assign(this.thresholds, next);
+    const keys = ['CFG_WARN_TEMP', 'CFG_HIGH_TEMP', 'CFG_CRIT_TEMP', 'CFG_OFFLINE_SECONDS', 'CFG_LOW_BATTERY', 'CFG_RISE_RATE', 'CFG_LOG_INTERVAL'];
+    for (const k of keys) if (patch[k] != null && Number.isFinite(Number(patch[k]))) this.thresholds[k] = Number(patch[k]);
+    if (this.thresholds.CFG_LOG_INTERVAL < 5) this.thresholds.CFG_LOG_INTERVAL = 5;
     this.logAudit({ user, action: 'set_thresholds', detail: JSON.stringify(this.thresholds) });
     this._persist();
     return this.thresholds;
@@ -249,20 +196,13 @@ class Store {
 
   // ===== Alert config (SMS/Email routing, escalation, templates) ==========
   getAlertConfig() { return this.alertConfig; }
-  // Currently-active "offline" alerts — used by the hourly offline-reminder timer in server.js.
-  activeOfflineAlerts() { return this.alerts.filter((a) => a.severity === 'offline' && a.state === 'active'); }
   setAlertConfig(patch, user) {
-    // never let request keys such as "__proto__" reach Object.assign (prototype pollution)
-    const unsafeKey = (k) => k === '__proto__' || k === 'constructor' || k === 'prototype';
-    const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
     if (patch.rules) for (const sev of Object.keys(patch.rules)) {
-      if (unsafeKey(sev)) continue;
-      if (!own(this.alertConfig.rules, sev)) this.alertConfig.rules[sev] = { channels: [], emails: [], phones: [], escalation: [] };
+      if (!this.alertConfig.rules[sev]) this.alertConfig.rules[sev] = { channels: [], emails: [], phones: [], escalate_to: '', escalate_after_min: 0 };
       Object.assign(this.alertConfig.rules[sev], patch.rules[sev]);
     }
     if (patch.escalation_tiers) for (const k of Object.keys(patch.escalation_tiers)) {
-      if (unsafeKey(k)) continue;
-      this.alertConfig.escalation_tiers[k] = Object.assign(own(this.alertConfig.escalation_tiers, k) ? this.alertConfig.escalation_tiers[k] : { name: k }, patch.escalation_tiers[k]);
+      this.alertConfig.escalation_tiers[k] = Object.assign(this.alertConfig.escalation_tiers[k] || { name: k }, patch.escalation_tiers[k]);
     }
     if (patch.templates) Object.assign(this.alertConfig.templates, patch.templates);
     if (patch.report) this.alertConfig.report = Object.assign(this.alertConfig.report || {}, patch.report);
@@ -271,45 +211,89 @@ class Store {
     return this.alertConfig;
   }
 
+  // ===== SMTP (outgoing e-mail) settings ==================================
+  // Dashboard-editable override for the SMTP host/user/password/from so a
+  // Super Admin can rotate the mail password from the Admin tab instead of
+  // SSH-ing into the server and editing .env. When no override is saved
+  // (smtpSettings is null, or has neither host nor user set), the server
+  // .env values (src/config.js) are used as before - nothing changes until
+  // someone explicitly saves settings here. The password is stored
+  // encrypted (src/crypto-util.js), never in plain text in the state file.
+  getSmtpSettings() {
+    const o = this.smtpSettings;
+    const usingOverride = !!(o && (o.host || o.user));
+    if (usingOverride) {
+      return {
+        host: o.host || '', port: o.port || 587, user: o.user || '', from: o.from || '',
+        has_password: !!o.passwordEnc, source: 'dashboard', updated_at: o.updated_at || null,
+      };
+    }
+    return {
+      host: config.SMTP_HOST, port: config.SMTP_PORT || 587, user: config.SMTP_USER, from: config.SMTP_FROM,
+      has_password: !!config.SMTP_PASSWORD, source: 'server .env', updated_at: null,
+    };
+  }
+
+  // Used by notify.js to actually send mail - includes the real password.
+  getEffectiveSmtpConfig() {
+    const o = this.smtpSettings;
+    if (o && (o.host || o.user)) {
+      const cryptoUtil = require('./crypto-util');
+      return {
+        host: o.host || config.SMTP_HOST, port: o.port || config.SMTP_PORT || 587,
+        user: o.user || config.SMTP_USER,
+        password: o.passwordEnc ? cryptoUtil.decrypt(o.passwordEnc) : config.SMTP_PASSWORD,
+        from: o.from || config.SMTP_FROM, _version: 'dash:' + (o.updated_at || 0),
+      };
+    }
+    return {
+      host: config.SMTP_HOST, port: config.SMTP_PORT || 587, user: config.SMTP_USER,
+      password: config.SMTP_PASSWORD, from: config.SMTP_FROM, _version: 'env',
+    };
+  }
+
+  // patch: { host, port, user, password, from }. password left blank/omitted
+  // keeps the previously saved one (so re-saving host/from doesn't force a
+  // password re-entry). Caller (api.js) must restrict this to super_admin.
+  setSmtpSettings(patch, user) {
+    const cryptoUtil = require('./crypto-util');
+    const cur = this.smtpSettings || {};
+    const next = {
+      host: patch.host !== undefined ? String(patch.host).trim() : (cur.host || ''),
+      port: patch.port !== undefined && patch.port !== '' ? Number(patch.port) : (cur.port || 587),
+      user: patch.user !== undefined ? String(patch.user).trim() : (cur.user || ''),
+      from: patch.from !== undefined ? String(patch.from).trim() : (cur.from || ''),
+      passwordEnc: cur.passwordEnc || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (patch.password) next.passwordEnc = cryptoUtil.encrypt(patch.password);
+    this.smtpSettings = next;
+    this.logAudit({ user, action: 'set_smtp_settings', detail: `host=${next.host || '(env)'} user=${next.user || '(env)'}` });
+    this._persist();
+    return this.getSmtpSettings();
+  }
+
+  // Revert to the server .env values (e.g. to undo a mistaken dashboard entry).
+  clearSmtpSettings(user) {
+    this.smtpSettings = null;
+    this.logAudit({ user, action: 'clear_smtp_settings', detail: 'reverted to server .env SMTP settings' });
+    this._persist();
+    return this.getSmtpSettings();
+  }
+
   // ===== Sensor registry (serial / calibration / firmware / warranty) =====
   listSensorRegistry() {
     // Known sensors (live or in DB backfill) merged with any registry metadata.
     const ids = new Set([...this.sensors.keys(), ...this.sensorRegistry.keys()]);
-    const CAL_INTERVAL_DAYS = Number(config.CALIBRATION_INTERVAL_DAYS) || 365;
-    const WARN_WITHIN_DAYS = Number(config.WARRANTY_WARN_DAYS) || 60;
-    const now = Date.now();
     return [...ids].sort().map((id) => {
       const s = this.sensors.get(id) || {};
       const r = this.sensorRegistry.get(id) || {};
-      const out = {
+      return {
         sensor_id: id, coach_id: s.coach_id || null, tm_id: s.tm_id || null,
         serial_no: r.serial_no || null, calibration_date: r.calibration_date || null,
         firmware: r.firmware || null, warranty: r.warranty || null, installation_date: r.installation_date || null,
         status: s.status || 'unknown',
-        calibration_overdue: false, calibration_days_overdue: null,
-        warranty_expiring: false, warranty_expired: false, warranty_days_left: null,
       };
-      // "Overdue" = more than CAL_INTERVAL_DAYS since the last recorded calibration. No date on file
-      // is treated as unknown, not overdue (nothing to warn about until a first date is entered).
-      if (r.calibration_date) {
-        const calMs = Date.parse(r.calibration_date);
-        if (!isNaN(calMs)) {
-          const daysSince = (now - calMs) / 86400000;
-          if (daysSince > CAL_INTERVAL_DAYS) { out.calibration_overdue = true; out.calibration_days_overdue = Math.round(daysSince - CAL_INTERVAL_DAYS); }
-        }
-      }
-      // "Warranty" is free text ("date or text" per the edit screen); only a value that parses as a
-      // real date can be checked, so anything else (e.g. "5 years") is left alone rather than guessed at.
-      if (r.warranty) {
-        const wMs = Date.parse(r.warranty);
-        if (!isNaN(wMs)) {
-          const daysLeft = Math.round((wMs - now) / 86400000);
-          out.warranty_days_left = daysLeft;
-          if (daysLeft < 0) out.warranty_expired = true;
-          else if (daysLeft <= WARN_WITHIN_DAYS) out.warranty_expiring = true;
-        }
-      }
-      return out;
     });
   }
   setSensorRegistry(sensor_id, patch, actor) {
@@ -356,60 +340,12 @@ class Store {
   exportBackup() {
     return Object.assign({ _backup_version: 1, _exported_at: new Date().toISOString() }, this._snapshot());
   }
-  // Scheduled, no admin action needed: writes a dated backup file and deletes ones older than
-  // BACKUP_KEEP_DAYS (default 14). Runs from server.js on a timer. Failure here (e.g. disk full)
-  // is logged but never throws — a backup problem must not take the live app down.
-  autoBackup() {
-    // Self-throttle (defense in depth, independent of whatever schedules this call): even if this is
-    // ever invoked far too often — a bad interval, a future code path, anything — it will not write
-    // more than one backup file per minute. This is what actually stops a runaway-timer bug from
-    // filling the disk and pegging the CPU, regardless of where the runaway call is coming from.
-    const now = Date.now();
-    if (this._lastAutoBackupAt && now - this._lastAutoBackupAt < 60000) return null;
-    this._lastAutoBackupAt = now;
-    try {
-      const dir = config.BACKUP_DIR || path.join(config.DATA_DIR, 'backups');
-      fs.mkdirSync(dir, { recursive: true });
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const file = path.join(dir, `backup-${stamp}.json`);
-      fs.writeFileSync(file, JSON.stringify(this.exportBackup()), { mode: 0o600 });
-      const keepMs = (Number(config.BACKUP_KEEP_DAYS) || 14) * 86400000;
-      const now = Date.now();
-      for (const f of fs.readdirSync(dir)) {
-        if (!/^backup-.*\.json$/.test(f)) continue;
-        const full = path.join(dir, f);
-        try { if (now - fs.statSync(full).mtimeMs > keepMs) fs.unlinkSync(full); } catch (e) {}
-      }
-      console.log(`[backup] wrote ${file}`);
-      return file;
-    } catch (e) {
-      console.error('[backup] auto backup failed:', e.message);
-      return null;
-    }
-  }
   importBackup(snapshot, actor) {
-    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('invalid backup');
-    // Validate BEFORE touching live data: a wrong/empty file must never wipe users, coaches or field devices.
-    if (!snapshot._backup_version) throw new Error('not a RAIP backup file (missing _backup_version)');
-    if (!Array.isArray(snapshot.users) || !snapshot.users.some((u) => u && u.username && u.hash && u.role === 'super_admin')) {
-      throw new Error('backup has no super_admin user - restoring it would lock everyone out');
-    }
-    for (const k of ['emus', 'coaches', 'devices', 'depots']) {
-      if (snapshot[k] != null && !Array.isArray(snapshot[k])) throw new Error(`backup field "${k}" is malformed`);
-    }
-    const previous = this._snapshot();   // rollback point
-    const wipe = () => {
-      this.users.clear(); this.emus.clear(); this.coaches.clear(); this.assignment.clear();
-      this.userAssets.clear(); this.depots.clear(); this.devices.clear(); this.sensorRegistry.clear();
-      this.swaps = []; this.maintenance = [];
-    };
-    try {
-      wipe();
-      this._applySnapshot(snapshot);
-    } catch (e) {
-      wipe(); this._applySnapshot(previous);   // restore exactly what was there before
-      throw new Error('restore failed, nothing was changed: ' + e.message);
-    }
+    if (!snapshot || typeof snapshot !== 'object') throw new Error('invalid backup');
+    this.users.clear(); this.emus.clear(); this.coaches.clear(); this.assignment.clear();
+    this.userAssets.clear(); this.depots.clear(); this.devices.clear(); this.sensorRegistry.clear();
+    this.swaps = []; this.maintenance = [];
+    this._applySnapshot(snapshot);
     this.logAudit({ user: actor, action: 'restore_backup', detail: 'master data restored from backup' });
     this.flushSync();
     return { users: this.users.size, emus: this.emus.size, coaches: this.coaches.size, depots: this.depots.size, devices: this.devices.size };
@@ -417,25 +353,11 @@ class Store {
 
   // ===== Field device registry (self-updating RUT config) ================
   listDevices() {
-    // api_key is a live credential: mask it in the list (last 6 chars only, enough to tell devices
-    // apart) so any GLOBAL-scoped viewer doesn't see every device's full key just by opening the page.
-    return [...this.devices.values()].map((d) => {
-      const o = Object.assign({}, d);
-      if (o.api_key) { o.api_key_masked = 'dk_...' + o.api_key.slice(-6); delete o.api_key; }
-      return o;
-    });
+    return [...this.devices.values()].map((d) => Object.assign({}, d));
   }
-  // Random, high-entropy per-device credential (not a human password, so a fast hash is fine —
-  // it only ever needs to be compared, never brute-force-resistant on top of its own 192 bits).
-  _genDeviceKey() { return 'dk_' + crypto.randomBytes(24).toString('hex'); }
-  _indexDeviceKey(d) { if (d.api_key) this._deviceByKey.set(d.api_key, d); }
-  // Used by ingest to authenticate a request and bind it to the device's own registered coach.
-  deviceByApiKey(key) { return key ? this._deviceByKey.get(key) || null : null; }
-
   upsertDevice(body, actor) {
     if (!body.device_id) throw new Error('device_id required');
     const cur = this.devices.get(body.device_id) || { device_id: body.device_id, last_seen: null, last_ip: null };
-    if (!cur.api_key) { cur.api_key = this._genDeviceKey(); this._indexDeviceKey(cur); }   // every device gets its own key, existing or new
     ['name', 'coach_id', 'emu_id', 'tag1', 'tag2', 'tag3', 'tag4'].forEach((k) => { if (body[k] !== undefined) cur[k] = body[k] || null; });
     // Optional per-device interval override, in seconds. Leave unset (null) to
     // follow the global "Log interval (s)" from Admin -> Thresholds.
@@ -454,18 +376,8 @@ class Store {
     this._persist();
     return cur;
   }
-  // New key for a device that was physically replaced, or whose old key may have leaked.
-  rotateDeviceKey(device_id, actor) {
-    const d = this.devices.get(device_id); if (!d) throw new Error('device not found');
-    if (d.api_key) this._deviceByKey.delete(d.api_key);
-    d.api_key = this._genDeviceKey(); this._indexDeviceKey(d);
-    this.logAudit({ user: actor, action: 'rotate_device_key', detail: device_id });
-    this._persist();
-    return { device_id, api_key: d.api_key };
-  }
   deleteDevice(device_id, actor) {
     if (!this.devices.has(device_id)) throw new Error('device not found');
-    const old = this.devices.get(device_id); if (old && old.api_key) this._deviceByKey.delete(old.api_key);
     this.devices.delete(device_id);
     this.logAudit({ user: actor, action: 'delete_device', detail: device_id });
     this._persist();
@@ -476,12 +388,8 @@ class Store {
     if (!d) return null;
     d.last_seen = new Date().toISOString();
     if (ip) d.last_ip = ip;
-    // Zero-touch migration: a device registered before per-device keys existed gets one generated
-    // right here, on its own next config pull. The self-update RUT script re-reads "api_key" from
-    // this response every cycle and switches to it automatically — no site visit needed.
-    if (!d.api_key) { d.api_key = this._genDeviceKey(); this._indexDeviceKey(d); this._persist(); }
-    // note: last_seen is persisted lazily (at most every 5 min), see _persistSlow()
-    this._persistSlow();
+    // note: last_seen change is persisted lazily (debounced)
+    this._persist();
     return {
       ok: true,
       enabled: d.enabled !== false,
@@ -489,7 +397,7 @@ class Store {
       coach_id: d.coach_id || null,
       emu_id: d.emu_id || null,
       ingest_path: '/api/v1/ingest',
-      api_key: d.api_key,
+      api_key: config.DATA_API_KEY,
       tags: [d.tag1 || '1.3', d.tag2 || '1.4', d.tag3 || '1.5', d.tag4 || '1.6'],
       // Post interval is centrally controlled from Admin → Thresholds → "Log
       // interval (s)" — one setting governs every push-mode field device.
@@ -572,54 +480,26 @@ class Store {
 
   // Returns alerts whose escalation delay has elapsed without acknowledgement,
   // marking them escalated. Server sends to the configured tier.
-  // Backward-compatible reader: a rule saved before this change has escalate_to/escalate_after_min
-  // instead of an "escalation" array. Read either shape the same way — nothing already configured by
-  // an admin silently stops escalating after this upgrade.
-  static escalationChainFor(rule) {
-    if (!rule) return [];
-    if (Array.isArray(rule.escalation)) return rule.escalation.filter((s) => s && s.tier && s.after_min);
-    if (rule.escalate_to && rule.escalate_after_min) return [{ tier: rule.escalate_to, after_min: rule.escalate_after_min }];
-    return [];
-  }
   dueEscalations() {
     const out = [];
     const now = Date.now();
     for (const a of this.alerts) {
-      if (a.state !== 'active') continue;
-      // An alert saved by the OLD single-tier system (before this change) has `escalated: true/false`
-      // and no per-level history — treat it as already fully escalated once, so upgrading never causes
-      // every old open alert to suddenly fire all 4 levels at once.
-      if (!Array.isArray(a.escalated_levels)) a.escalated_levels = a.escalated ? ['L1', 'L2', 'L3', 'L4'] : [];
-      const depotId = a.coach_id ? this.depotOfCoach(a.coach_id) : null;
-      const depotCfg = this.getDepotEscalation(depotId);
-      const rule = (depotCfg && depotCfg.rules[a.severity]) || this.alertConfig.rules[a.severity];
-      const chain = Store.escalationChainFor(rule);
-      for (const stepDef of chain) {
-        if (a.escalated_levels.includes(stepDef.tier)) continue;               // this level already sent
-        if (now - Date.parse(a.at) < stepDef.after_min * 60000) continue;      // not due yet
-        a.escalated_levels.push(stepDef.tier);
-        a.escalated = true;   // kept for any old code/reporting that still reads the boolean
-        const tierDef = (depotCfg && depotCfg.escalation_tiers[stepDef.tier]) || this.alertConfig.escalation_tiers[stepDef.tier];
-        if (tierDef) {
-          // Coach/EMU-scoped: only people ASSIGNED to this alert's own coach, holding the tier's
-          // role, are escalated to — plus the tier's fixed emails/phones (if any), which are meant
-          // as fleet-wide extras (e.g. a duty desk), not the primary mechanism.
-          const scoped = a.coach_id && tierDef.role ? this.usersForCoach(a.coach_id).filter((u) => u.role === tierDef.role) : [];
-          const tier = { name: tierDef.name,
-            emails: [...new Set([...(tierDef.emails || []), ...scoped.map((u) => u.email).filter(Boolean)])],
-            phones: [...new Set([...(tierDef.phones || []), ...scoped.map((u) => u.phone).filter(Boolean)])] };
-          out.push({ alert: a, tier, level: stepDef.tier });
-        }
-        this.logAudit({ user: 'system', action: 'escalate_alert', detail: `#${a.id} -> ${stepDef.tier}${a.coach_id ? ' (scoped to coach ' + a.coach_id + (depotCfg ? ', depot policy ' + depotId : '') + ')' : ''}` });
+      if (a.state !== 'active' || a.escalated) continue;
+      const rule = this.alertConfig.rules[a.severity];
+      if (!rule || !rule.escalate_to || !rule.escalate_after_min) continue;
+      if (now - Date.parse(a.at) >= rule.escalate_after_min * 60000) {
+        a.escalated = true;
+        const tier = this.alertConfig.escalation_tiers[rule.escalate_to];
+        if (tier) out.push({ alert: a, tier });
+        this.logAudit({ user: 'system', action: 'escalate_alert', detail: `#${a.id} -> ${rule.escalate_to}` });
       }
     }
     return out;
   }
 
   // ===== Users (CRUD) =====================================================
-  seedUser({ username, password, role, depot_id, email, phone, must_change }) {
-    this.users.set(username, { username, hash: pw.hashSync(password), role, depot_id: depot_id || null, email: email || null, phone: phone || null,
-      must_change: !!must_change, token_version: 0, disabled: false, pw_changed_at: new Date().toISOString() });
+  seedUser({ username, password, role, depot_id, email, phone }) {
+    this.users.set(username, { username, hash: bcrypt.hashSync(password, 10), role, depot_id: depot_id || null, email: email || null, phone: phone || null });
     if (!this.userAssets.has(username)) this.userAssets.set(username, { emus: [], coaches: [] });
     this._persist();
   }
@@ -629,51 +509,35 @@ class Store {
       const global = config.GLOBAL_ROLES.includes(u.role);
       const a = this.userAssets.get(u.username) || { emus: [], coaches: [] };
       return { username: u.username, role: u.role, depot_id: u.depot_id, email: u.email || null, phone: u.phone || null,
-        disabled: !!u.disabled, must_change: !!u.must_change, totp_enabled: !!(u.totp && u.totp.enabled),
-        last_login: u.last_login || null, last_login_ip: u.last_login_ip || null, pw_changed_at: u.pw_changed_at || null,
         all_access: global, emus: global ? [] : a.emus, coaches: global ? [] : a.coaches };
     });
   }
-  async createUser({ username, password, role, depot_id, email, phone }, actor) {
-    username = String(username || '').trim();
+  createUser({ username, password, role, depot_id, email, phone }, actor) {
     if (!username || !password || !role) throw new Error('username, password, role required');
-    if (!/^[A-Za-z0-9._@-]{3,64}$/.test(username)) throw new Error('username: 3-64 characters, letters, digits and . _ @ - only');
-    const bad = pw.policyError(password, username); if (bad) throw new Error(bad);
-    if ([...this.users.keys()].some((k) => k.toLowerCase() === username.toLowerCase())) throw new Error('user already exists');
+    if (String(password).length < 8) throw new Error('password must be at least 8 characters');
+    if (this.users.has(username)) throw new Error('user already exists');
     if (!config.ROLES.includes(role)) throw new Error('invalid role');
-    const hash = await pw.hash(password);
-    // the admin who typed this password must not be the one who knows the real password: the user must choose their own at first sign-in
-    this.users.set(username, { username, hash, role, depot_id: depot_id || null, email: email || null, phone: phone || null,
-      must_change: true, token_version: 0, disabled: false, pw_changed_at: new Date().toISOString() });
+    this.users.set(username, { username, hash: bcrypt.hashSync(password, 10), role, depot_id: depot_id || null, email: email || null, phone: phone || null });
     this.userAssets.set(username, { emus: [], coaches: [] });
     this.logAudit({ user: actor, action: 'create_user', detail: username + ' (' + role + ')' });
     this._persist();
-    return { username, role, depot_id: depot_id || null, email: email || null, phone: phone || null, must_change: true };
+    return { username, role, depot_id: depot_id || null, email: email || null, phone: phone || null };
   }
-  async updateUser(username, patch, actor) {
+  updateUser(username, patch, actor) {
     const u = this.users.get(username);
     if (!u) throw new Error('user not found');
-    if (patch.role) {
-      if (!config.ROLES.includes(patch.role)) throw new Error('invalid role');
-      if (u.role === 'super_admin' && patch.role !== 'super_admin' && [...this.users.values()].filter((x) => x.role === 'super_admin' && !x.disabled).length < 2) throw new Error('cannot demote the last active super admin');
-      u.role = patch.role;
-    }
+    if (patch.role) { if (!config.ROLES.includes(patch.role)) throw new Error('invalid role'); u.role = patch.role; }
     if (patch.depot_id !== undefined) u.depot_id = patch.depot_id || null;
     if (patch.email !== undefined) u.email = patch.email || null;
     if (patch.phone !== undefined) u.phone = patch.phone || null;
-    if (patch.password) {
-      const bad = pw.policyError(patch.password, username); if (bad) throw new Error(bad);
-      u.hash = await pw.hash(patch.password); u.must_change = true; u.token_version = (u.token_version || 0) + 1; u.pw_changed_at = new Date().toISOString();
-    }
-    this.logAudit({ user: actor, action: 'update_user', detail: username + (patch.password ? ' (password reset)' : '') });
+    if (patch.password) { if (String(patch.password).length < 8) throw new Error('password must be at least 8 characters'); u.hash = bcrypt.hashSync(patch.password, 10); }
+    this.logAudit({ user: actor, action: 'update_user', detail: username });
     this._persist();
     return { username: u.username, role: u.role, depot_id: u.depot_id, email: u.email, phone: u.phone };
   }
   deleteUser(username, actor) {
     if (!this.users.has(username)) throw new Error('user not found');
     if (username === actor) throw new Error('cannot delete your own account');
-    const victim = this.users.get(username);
-    if (victim.role === 'super_admin' && [...this.users.values()].filter((x) => x.role === 'super_admin' && !x.disabled).length < 2) throw new Error('cannot delete the last active super admin');
     this.users.delete(username);
     this.userAssets.delete(username);
     this.logAudit({ user: actor, action: 'delete_user', detail: username });
@@ -715,39 +579,6 @@ class Store {
   // Users who should be notified about an event on a given coach:
   // global-role users (see everything) + users assigned that coach/EMU.
   // Returns only those with a contact method (email/phone).
-  depotOfCoach(coach_id) {
-    const c = this.coaches.get(coach_id);
-    if (!c || !c.emu_id) return null;
-    const e = this.emus.get(c.emu_id);
-    return e ? (e.depot_id || null) : null;
-  }
-  // A depot's own escalation policy, or null if it uses the fleet-wide one (this.alertConfig).
-  getDepotEscalation(depot_id) { return depot_id ? (this.depotEscalation.get(depot_id) || null) : null; }
-  setDepotEscalation(depot_id, patch, actor) {
-    if (!depot_id) throw new Error('depot_id required');
-    if (!this.depots.has(depot_id)) throw new Error('depot not found');
-    const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-    const unsafeKey = (k) => /^__proto__$|^constructor$|^prototype$/.test(k);
-    const cur = this.depotEscalation.get(depot_id) || { rules: {}, escalation_tiers: {} };
-    if (patch.rules) for (const sev of Object.keys(patch.rules)) {
-      if (unsafeKey(sev)) continue;
-      if (!own(cur.rules, sev)) cur.rules[sev] = { escalation: [] };
-      Object.assign(cur.rules[sev], patch.rules[sev]);
-    }
-    if (patch.escalation_tiers) for (const k of Object.keys(patch.escalation_tiers)) {
-      if (unsafeKey(k)) continue;
-      cur.escalation_tiers[k] = Object.assign(own(cur.escalation_tiers, k) ? cur.escalation_tiers[k] : { name: k }, patch.escalation_tiers[k]);
-    }
-    this.depotEscalation.set(depot_id, cur);
-    this.logAudit({ user: actor, action: 'set_depot_escalation', detail: depot_id });
-    this._persist();
-    return cur;
-  }
-  clearDepotEscalation(depot_id, actor) {
-    this.depotEscalation.delete(depot_id);
-    this.logAudit({ user: actor, action: 'clear_depot_escalation', detail: depot_id + ' (back to fleet default)' });
-    this._persist();
-  }
   usersForCoach(coach_id) {
     const out = [];
     for (const u of this.users.values()) {
@@ -849,10 +680,8 @@ class Store {
     this.comm.delete(coach_id);
     // Remove the coach's live sensors/series so it stops appearing in views.
     for (const s of [...this.sensors.values()]) if (s.coach_id === coach_id) { this.sensors.delete(s.sensor_id); this.series.delete(s.sensor_id); }
-    const orphanDevices = [...this.devices.values()].filter((d) => d.coach_id === coach_id).map((d) => d.device_id);
-    this.logAudit({ user: actor, action: 'delete_coach', detail: coach_id + (orphanDevices.length ? ` (field device(s) still registered: ${orphanDevices.join(', ')})` : '') });
+    this.logAudit({ user: actor, action: 'delete_coach', detail: coach_id });
     this._persist();
-    return { orphan_devices: orphanDevices };
   }
   pollableCoaches() {
     return [...this.coaches.values()].filter((c) => c.poll_enabled && c.rut200_ip);
@@ -864,14 +693,6 @@ class Store {
     if (!scope || scope.all) return all.slice(0, 500);
     return all.filter((m) => m.coach_id && scope.coaches.has(m.coach_id)).slice(0, 500);
   }
-  // Target turnaround time, in hours, for a maintenance record — how "Overdue" is decided.
-  // An explicit priority (critical/high/normal/low) always wins; otherwise the type decides.
-  static SLA_HOURS_BY_TYPE = { corrective: 24, sensor_replacement: 48, battery_replacement: 48, work_order: 72, calibration: 168, preventive: 168 };
-  static SLA_HOURS_BY_PRIORITY = { critical: 4, high: 24, normal: 72, low: 168 };
-  slaHoursFor(rec) {
-    if (rec.priority && Store.SLA_HOURS_BY_PRIORITY[rec.priority] != null) return Store.SLA_HOURS_BY_PRIORITY[rec.priority];
-    return Store.SLA_HOURS_BY_TYPE[rec.type] || 72;
-  }
   createMaintenance(body, actor) {
     if (!body.coach_id) throw new Error('coach_id required');
     if (!body.title) throw new Error('title required');
@@ -879,7 +700,6 @@ class Store {
       id: (this.maintenance[0] ? this.maintenance[0].id : 0) + 1,
       coach_id: body.coach_id,
       type: body.type || 'work_order',        // work_order | preventive | corrective | calibration | sensor_replacement | battery_replacement
-      priority: ['critical', 'high', 'normal', 'low'].includes(body.priority) ? body.priority : null,   // null = SLA decided by type
       title: body.title,
       status: body.status || 'open',          // open | in_progress | closed
       assigned_to: body.assigned_to || null,
@@ -895,34 +715,10 @@ class Store {
     const m = this.maintenance.find((x) => x.id === Number(id));
     if (!m) throw new Error('record not found');
     ['title', 'type', 'assigned_to', 'notes'].forEach((k) => { if (patch[k] !== undefined) m[k] = patch[k]; });
-    if (patch.priority !== undefined) m.priority = ['critical', 'high', 'normal', 'low'].includes(patch.priority) ? patch.priority : null;
     if (patch.status !== undefined) { m.status = patch.status; if (patch.status === 'closed' && !m.closed_at) m.closed_at = new Date().toISOString(); if (patch.status !== 'closed') m.closed_at = null; }
     this.logAudit({ user: actor, action: 'update_maintenance', detail: `#${id} -> ${m.status}` });
     this._persist();
     return m;
-  }
-  // Maintenance list with computed SLA fields (never stored, so tightening/loosening the SLA table
-  // above takes effect immediately for every existing record, not just new ones).
-  maintenanceWithSla(list) {
-    const now = Date.now();
-    return (list || this.maintenance).map((m) => {
-      const targetH = this.slaHoursFor(m);
-      const dueAt = new Date(Date.parse(m.created_at) + targetH * 3600000).toISOString();
-      const endMs = m.closed_at ? Date.parse(m.closed_at) : now;
-      const hoursOpen = +((endMs - Date.parse(m.created_at)) / 3600000).toFixed(1);
-      const overdue = m.status !== 'closed' && now > Date.parse(dueAt);
-      const closedLate = m.status === 'closed' && Date.parse(m.closed_at) > Date.parse(dueAt);
-      return Object.assign({}, m, { sla_target_hours: targetH, sla_due_at: dueAt, hours_open: hoursOpen, overdue, closed_late: closedLate });
-    });
-  }
-  maintenanceSlaSummary(list) {
-    const withSla = this.maintenanceWithSla(list);
-    const open = withSla.filter((m) => m.status !== 'closed');
-    const closed = withSla.filter((m) => m.status === 'closed');
-    return {
-      open_total: open.length, open_on_track: open.filter((m) => !m.overdue).length, open_overdue: open.filter((m) => m.overdue).length,
-      closed_total: closed.length, closed_on_time: closed.filter((m) => !m.closed_late).length, closed_late: closed.filter((m) => m.closed_late).length,
-    };
   }
   deleteMaintenance(id, actor) {
     const i = this.maintenance.findIndex((x) => x.id === Number(id));
@@ -990,17 +786,6 @@ class Store {
   coachHistory(coach_id) { return this.swaps.filter((s) => s.coach_id === coach_id); }
 
   // ===== Ingestion ========================================================
-  _shouldArchive(sensorId, eventTime) {
-    const everyMs = (Number(this.getThresholds().CFG_DB_LOG_INTERVAL) || 0) * 1000;
-    if (!everyMs) return true;
-    if (!this._lastArchive) this._lastArchive = new Map();
-    const ts = Date.parse(eventTime);
-    const last = this._lastArchive.get(sensorId) || 0;
-    // small tolerance so push-time jitter never skips a whole interval
-    if (ts - last >= everyMs - Math.min(30000, everyMs * 0.25)) { this._lastArchive.set(sensorId, ts); return true; }
-    return false;
-  }
-
   ingestReading(r) {
     this._ingestCount++;
     const t = this.getThresholds();
@@ -1042,21 +827,15 @@ class Store {
       if (this.db) this.db.insertReading(meta).catch(() => {});
       return meta;
     }
-    const wasOffline = existing && existing.status === 'offline';
 
     this.sensors.set(r.sensor_id, meta);
-    // The coach (or this sensor) is reporting again: close out its "offline" alert automatically —
-    // otherwise it sits active forever until a human notices the coach came back and acknowledges it.
-    if (wasOffline && r.coach_id) this._autoResolve((a) => a.severity === 'offline' && a.coach_id === r.coach_id, 'coach back online');
     const buf = this.series.get(r.sensor_id) || [];
     buf.push({ t: eventTime, temperature: meta.temperature, battery: meta.battery_health });
     if (buf.length > MAX_SERIES) buf.shift();
     this.series.set(r.sensor_id, buf);
 
     // Durable archive to PostgreSQL (never blocks or crashes the live path).
-    // Live dashboard/alerts update on every push; the DB row is written only once
-    // per CFG_DB_LOG_INTERVAL per sensor (0 = every push). Editable in Admin -> Thresholds.
-    if (this.db && this._shouldArchive(meta.sensor_id, eventTime)) this.db.insertReading(meta).catch(() => {});
+    if (this.db) this.db.insertReading(meta).catch(() => {});
 
     // Predictive: rapid temperature-rise detection over the recent window.
     if (meta.temperature != null && meta.status !== 'offline') {
@@ -1065,10 +844,6 @@ class Store {
         this._raise({ severity: 'rapid_rise', sensor_id: meta.sensor_id, coach_id: meta.coach_id,
           emu_id: meta.emu_id, tm_id: meta.tm_id, value: meta.temperature,
           message: `Rapid rise on ${meta.tm_id || meta.sensor_id} (${slope.toFixed(1)} C/min) at ${meta.temperature.toFixed(1)}C` });
-      } else {
-        // The rise has slowed or the temperature dropped back under the "rapid rise" floor: this was
-        // never auto-resolved before, so a rapid-rise alert would sit active forever otherwise.
-        this._autoResolve((a) => a.sensor_id === meta.sensor_id && a.severity === 'rapid_rise', 'rate of rise back to normal');
       }
     }
 
@@ -1078,49 +853,14 @@ class Store {
 
   sweepOffline() {
     const t = this.getThresholds();
-    const statusCutoff = Date.now() - t.CFG_OFFLINE_SECONDS * 1000;          // dashboard online/offline badge: instant, unchanged
-    const alertCutoff = Date.now() - t.CFG_OFFLINE_ALERT_SECONDS * 1000;     // email/SMS: only once GENUINELY sustained
-    const dueForAlert = new Map(); // coach_id -> sensors whose outage has now crossed the ALERT threshold
+    const cutoff = Date.now() - t.CFG_OFFLINE_SECONDS * 1000;
     for (const s of this.sensors.values()) {
       const wasOnline = s.status === 'online';
-      if (Date.parse(s.last_update) < statusCutoff) {
-        if (wasOnline) s.offline_since = s.last_update;   // dashboard flips now; remember when THIS outage actually started
+      if (Date.parse(s.last_update) < cutoff) {
         s.status = 'offline';
+        if (wasOnline) this._raise({ severity: 'offline', sensor_id: s.sensor_id, coach_id: s.coach_id,
+          emu_id: s.emu_id, tm_id: s.tm_id, message: `Sensor ${s.sensor_id} offline (no data > ${t.CFG_OFFLINE_SECONDS}s)` });
       }
-      // A brief signal drop / power blip that recovers before CFG_OFFLINE_ALERT_SECONDS never reaches
-      // here at all (the sensor goes back online and a fresh reading replaces this object entirely,
-      // clearing offline_since/offline_alerted) — so no email/SMS is ever sent for it.
-      if (s.status === 'offline' && s.offline_since && !s.offline_alerted && Date.parse(s.offline_since) <= alertCutoff) {
-        s.offline_alerted = true;
-        const key = s.coach_id || ('sensor:' + s.sensor_id);
-        if (!dueForAlert.has(key)) dueForAlert.set(key, []);
-        dueForAlert.get(key).push(s);
-      }
-    }
-    // ONE offline alert per coach (not one per motor sensor -> no 4 duplicate emails/SMS).
-    for (const list of dueForAlert.values()) {
-      const first = list[0];
-      const coachId = first.coach_id;
-      if (coachId) {
-        // straggler guard: a sibling sensor of the same coach crossing the alert threshold in the
-        // very next sweep must not raise a second alert for the same outage.
-        const dup = this.alerts.find((x) => x.severity === 'offline' && x.coach_id === coachId &&
-          x.state === 'active' && (Date.now() - Date.parse(x.at)) < 120000);
-        if (dup) continue;
-      }
-      const tms = list.map((x) => x.tm_id || x.sensor_id).sort().join(', ');
-      let message;
-      const mins = Math.round(t.CFG_OFFLINE_ALERT_SECONDS / 60);
-      if (!coachId) {
-        message = `Sensor ${first.sensor_id} offline for over ${mins} min (no data since ${first.offline_since})`;
-      } else {
-        const total = this.allSensors().filter((x) => x.coach_id === coachId).length;
-        message = list.length >= total
-          ? `Coach ${coachId} offline for over ${mins} min - all ${total} sensors (${tms})`
-          : `Coach ${coachId}: ${list.length} of ${total} sensors offline for over ${mins} min (${tms})`;
-      }
-      this._raise({ severity: 'offline', sensor_id: first.sensor_id, coach_id: coachId,
-        emu_id: first.emu_id, tm_id: coachId ? tms : first.tm_id, message });
     }
   }
 
@@ -1131,92 +871,25 @@ class Store {
     if (s.temperature > t.CFG_CRIT_TEMP) sev = 'critical';
     else if (s.temperature > t.CFG_HIGH_TEMP) sev = 'high';
     else if (s.temperature > t.CFG_WARN_TEMP) sev = 'warning';
-    // Auto-resolve: at most one temperature severity is ever "true" for a sensor at a given moment.
-    // Any OTHER active temperature-severity alert for this sensor is superseded (temp moved to a
-    // different band, or back to normal) and is closed out automatically rather than sitting active
-    // forever until someone manually acknowledges it.
-    const TEMP_SEVS = ['warning', 'high', 'critical'];
-    this._autoResolve((a) => a.sensor_id === s.sensor_id && TEMP_SEVS.includes(a.severity) && a.severity !== sev,
-      sev ? `superseded — now ${sev}` : 'temperature back to normal');
     if (sev) this._raise({ severity: sev, sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id,
       tm_id: s.tm_id, value: s.temperature, message: `${s.tm_id || s.sensor_id} on ${s.coach_id}: ${s.temperature.toFixed(1)}C (${sev})` });
-    if (s.battery_health != null && s.battery_health <= t.CFG_LOW_BATTERY) {
-      this._raise({ severity: 'low_battery', sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id, tm_id: s.tm_id,
-        value: s.battery_health, message: `Low battery on ${s.sensor_id}: ${s.battery_health}%` });
-    } else if (s.battery_health != null) {
-      this._autoResolve((a) => a.sensor_id === s.sensor_id && a.severity === 'low_battery', 'battery back above threshold');
-    }
+    if (s.battery_health != null && s.battery_health <= t.CFG_LOW_BATTERY) this._raise({ severity: 'low_battery',
+      sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id, tm_id: s.tm_id, value: s.battery_health,
+      message: `Low battery on ${s.sensor_id}: ${s.battery_health}%` });
   }
   _raise(a) {
-    // One active incident per sensor+severity: as long as an alert for this exact condition is
-    // still 'active' (not yet auto-resolved or acknowledged/closed), a repeated reading of the same
-    // severity does NOT create another row or send another email/SMS — it was previously re-created
-    // (and re-notified) roughly every 60 seconds for as long as a fault lasted, flooding both the
-    // alert list and everyone's inbox/phone for a single ongoing problem. Escalation (separate timer)
-    // still re-notifies an unacknowledged alert after CFG escalate_after_min, so a genuinely ignored
-    // problem is not silent forever — it just isn't spammed every minute either.
-    const recent = this.alerts.find((x) => x.sensor_id === a.sensor_id && x.severity === a.severity && x.state === 'active');
+    const recent = this.alerts.find((x) => x.sensor_id === a.sensor_id && x.severity === a.severity &&
+      x.state === 'active' && (Date.now() - Date.parse(x.at)) < 60000);
     if (recent) return;
-    const created = Object.assign({ id: this._alertSeq++ }, a, { state: 'active',
-      at: new Date().toISOString(), acknowledged_by: null, acknowledged_at: null, escalated: false });
-    this.alerts.unshift(created);
+    this.alerts.unshift(Object.assign({ id: this._alertSeq++ }, a, { state: 'active',
+      at: new Date().toISOString(), acknowledged_by: null, acknowledged_at: null, escalated: false }));
     if (this.alerts.length > 5000) this.alerts.pop();
-    this._persistSlow();   // alerts are durable now (were memory-only before); throttled since this runs per reading
-    this._logAlertEvent({ alert_id: created.id, event: 'raised', severity: created.severity,
-      sensor_id: created.sensor_id, coach_id: created.coach_id, emu_id: created.emu_id, tm_id: created.tm_id,
-      message: created.message });
     if (this._notifier) { try { Promise.resolve(this._notifier(this.alerts[0])).catch(() => {}); } catch (e) {} }
-  }
-  // Marks every currently-active alert matching `match` as resolved (condition cleared on its own —
-  // distinct from "acknowledged": a resolved alert still shows in history for review/closure).
-  // Fire-and-forget SQL alert-event logging. Guarded against ANY problem with the db object (missing
-  // method, wrong shape, e.g. a test mock or a future db.js that doesn't implement it, or a thrown
-  // error) so this NEVER crashes the live alert/ingest path — a monitoring-history write failing must
-  // never take down actual monitoring.
-  _logAlertEvent(e) {
-    try { if (this.db && typeof this.db.logAlertEvent === 'function') Promise.resolve(this.db.logAlertEvent(e)).catch(() => {}); }
-    catch (err) { /* never let alert-history logging break alerting itself */ }
-  }
-  _autoResolve(match, reason) {
-    let n = 0;
-    for (const a of this.alerts) {
-      if (a.state !== 'active' || !match(a)) continue;
-      a.state = 'resolved'; a.resolved_at = new Date().toISOString(); a.resolved_reason = reason; n++;
-      this._logAlertEvent({ alert_id: a.id, event: 'resolved', severity: a.severity,
-        sensor_id: a.sensor_id, coach_id: a.coach_id, emu_id: a.emu_id, tm_id: a.tm_id, detail: reason });
-    }
-    if (n) this._persistSlow();
-    return n;
   }
   acknowledgeAlert(id, user) {
     const a = this.alerts.find((x) => x.id === Number(id)); if (!a) return null;
-    if (a.state === 'closed') throw new Error('alert is already closed');
     a.state = 'acknowledged'; a.acknowledged_by = user; a.acknowledged_at = new Date().toISOString();
-    this.logAudit({ user, action: 'ack_alert', detail: 'alert #' + id });
-    this._logAlertEvent({ alert_id: a.id, event: 'acknowledged', severity: a.severity,
-      sensor_id: a.sensor_id, coach_id: a.coach_id, emu_id: a.emu_id, tm_id: a.tm_id, actor: user });
-    this._persist();
-    return a;
-  }
-  // Final step of the alert lifecycle: what was done about it, by whom. A closed alert is done —
-  // it no longer counts as active/pending review, but stays in history (never deleted).
-  closeAlert(id, user, { action, reason } = {}) {
-    const a = this.alerts.find((x) => x.id === Number(id)); if (!a) throw new Error('alert not found');
-    if (a.state === 'closed') throw new Error('alert is already closed');
-    if (!action || !String(action).trim()) throw new Error('action taken is required to close an alert');
-    a.state = 'closed'; a.closed_by = user; a.closed_at = new Date().toISOString();
-    a.action_taken = String(action).trim().slice(0, 500); a.closure_reason = reason ? String(reason).trim().slice(0, 500) : '';
-    this.logAudit({ user, action: 'close_alert', detail: `alert #${id}: ${a.action_taken}` });
-    this._logAlertEvent({ alert_id: a.id, event: 'closed', severity: a.severity,
-      sensor_id: a.sensor_id, coach_id: a.coach_id, emu_id: a.emu_id, tm_id: a.tm_id, actor: user,
-      message: a.action_taken, detail: a.closure_reason });
-    this._persist();
-    return a;
-  }
-  logSecurity(e) {
-    this.secLog.unshift(Object.assign({ at: new Date().toISOString() }, e));
-    if (this.secLog.length > 3000) this.secLog.length = 3000;
-    this._persistSlow();
+    this.logAudit({ user, action: 'ack_alert', detail: 'alert #' + id }); return a;
   }
   logAudit({ user, action, detail }) {
     this.audit.unshift({ user, action, detail, at: new Date().toISOString() });

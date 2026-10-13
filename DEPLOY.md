@@ -80,11 +80,13 @@ or the field devices will stop reporting.
 
 ---
 
-## First login
+## Default login
 
-Set `ADMIN_INITIAL_PASSWORD` (10+ characters) in `.env` BEFORE the first start, then sign in as `admin`
-and remove that line. If you do not set it, the first admin starts with a public default password and the
-dashboard makes you replace it at once. See `LOGIN_SECURITY_GUIDE.md`.
+```
+username: admin
+password: himnish@2025
+```
+**Change this after first login** (Admin → Users → Edit).
 
 ---
 
