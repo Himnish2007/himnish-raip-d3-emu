@@ -26,7 +26,7 @@ set DEMO_MODE=true          # Windows;  on macOS/Linux:  DEMO_MODE=true npm star
 npm start
 ```
 
-Open `http://localhost:8080`. Sign in as `admin / himnish@2025` (change this).
+Open `http://localhost:8080`. Sign in as `admin` with the first-run password (see `LOGIN_SECURITY_GUIDE.md`); the app makes you choose a new password at once.
 Demo mode generates 2 EMUs of synthetic data and seeds scoped demo users
 (`engineer` sees only EMU-02, `viewer` sees only coach MC-101).
 
@@ -133,8 +133,8 @@ git push -u origin main
 Then on railway.app: **New Project → Deploy from GitHub repo → select the repo**.
 Add a **Volume** (mount `/data`) and set Variables: `JWT_SECRET`, `DATA_API_KEY`,
 `DATA_DIR=/data`, `DEMO_MODE=false`, and the SMTP_/SMS_ vars when ready. Railway
-builds and gives a public HTTPS URL. First login `admin / himnish@2025` — change
-the password immediately under Admin → Users.
+builds and gives a public HTTPS URL. First login: `admin` with the first-run password, which you must replace at the first sign-in — change
+the password immediately (the app forces it at the first sign-in).
 
 ## Reports, Health Index & Audit (new)
 

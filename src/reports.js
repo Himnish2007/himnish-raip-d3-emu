@@ -1,6 +1,7 @@
 'use strict';
 
 const ExcelJS = require('exceljs');
+const PDFDocument = require('pdfkit');
 
 // ---------------------------------------------------------------------------
 // Report generation: real .xlsx (ExcelJS) + printable HTML (browser -> PDF).
@@ -88,9 +89,22 @@ function healthIndex(store, sensors, scope) {
     const temps = arr.filter((s) => s.temperature != null && s.status !== 'offline').map((s) => s.temperature);
     const avg = temps.length ? +(temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1) : null;
     const worst = rankName[Math.max.apply(null, arr.map((s) => rank[store.classify(s.status === 'offline' ? null : s.temperature)] || 0))];
-    const score = Math.round(arr.reduce((a, s) => a + s.score, 0) / arr.length);
+    // Communication health (item 25): a coach whose radio link is poor (weak signal, packet loss)
+    // is a real operational risk even while temperatures look fine — readings could be stale or
+    // about to stop entirely. This is a SECONDARY factor: capped so it can never outweigh temperature,
+    // which remains the primary safety signal the score is built on.
+    const sigVals = arr.filter((s) => s.signal_strength != null).map((s) => s.signal_strength);
+    const avgSignal = sigVals.length ? Math.round(sigVals.reduce((a, b) => a + b, 0) / sigVals.length) : null;
+    const cm = store.comm.get(coach_id);
+    let commPenalty = 0;
+    if (avgSignal != null && avgSignal < 50) commPenalty += Math.min(10, Math.round((50 - avgSignal) / 5));
+    if (cm && cm.packet_loss != null) commPenalty += Math.min(15, Math.round(cm.packet_loss));
+    commPenalty = Math.min(20, commPenalty);
+    const baseScore = Math.round(arr.reduce((a, s) => a + s.score, 0) / arr.length);
+    const score = Math.max(0, baseScore - commPenalty);
     if (emu_id) { if (!byEmu.has(emu_id)) byEmu.set(emu_id, []); byEmu.get(emu_id).push({ score, avg, count: arr.length }); }
-    return { coach_id, emu_id, count: arr.length, avg_temp: avg, worst, score };
+    return { coach_id, emu_id, count: arr.length, avg_temp: avg, worst, score,
+      comm_avg_signal: avgSignal, comm_packet_loss: cm ? cm.packet_loss : null, comm_penalty: commPenalty };
   }).sort((a, b) => a.score - b.score);
   const emus = [...byEmu.entries()].map(([emu_id, arr]) => {
     const score = Math.round(arr.reduce((a, c) => a + c.score, 0) / arr.length);
@@ -101,6 +115,39 @@ function healthIndex(store, sensors, scope) {
   const fleet = emus.length ? Math.round(emus.reduce((a, e) => a + e.score, 0) / emus.length)
     : (coaches.length ? Math.round(coaches.reduce((a, c) => a + c.score, 0) / coaches.length) : 100);
   return { sensors: sensorsOut, coaches, emus, fleet };
+}
+
+// A simple, honest table PDF (title + generated-by line + the same rows as the Excel export). Uses
+// pdfkit (pure JS, no headless-browser/Chromium dependency) so it stays cheap to run on a small server.
+function toPdf(type, store, sensors, scope) {
+  const { head, body } = rowsFor(type, store, sensors, scope);
+  const doc = new PDFDocument({ margin: 36, size: 'A4', layout: head.length > 7 ? 'landscape' : 'portrait' });
+  const chunks = [];
+  doc.on('data', (c) => chunks.push(c));
+  const done = new Promise((resolve) => doc.on('end', () => resolve(Buffer.concat(chunks))));
+
+  doc.fontSize(14).font('Helvetica-Bold').text('EMU Motor Coach TM Temperature Monitoring System');
+  doc.fontSize(9).font('Helvetica-Oblique').text(`${TYPES[type] || 'Report'} — generated ${ist(new Date())}`);
+  doc.moveDown(0.6);
+
+  const pageW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const colW = pageW / head.length;
+  const rowH = 16;
+  let y = doc.y;
+  const drawRow = (cells, opts = {}) => {
+    if (y + rowH > doc.page.height - doc.page.margins.bottom) { doc.addPage(); y = doc.page.margins.top; }
+    doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(8);
+    cells.forEach((c, i) => doc.text(String(c == null ? '' : c).slice(0, 40), doc.page.margins.left + i * colW, y, { width: colW - 4, height: rowH, ellipsis: true }));
+    if (opts.bold) doc.moveTo(doc.page.margins.left, y + rowH - 2).lineTo(doc.page.width - doc.page.margins.right, y + rowH - 2).lineWidth(0.5).stroke();
+    y += rowH;
+  };
+  drawRow(head, { bold: true });
+  for (const row of body) drawRow(row);
+  if (y + rowH > doc.page.height - doc.page.margins.bottom) { doc.addPage(); y = doc.page.margins.top; }
+  doc.fontSize(7).font('Helvetica-Oblique').text(`${body.length} row(s) — HIMNISH LIMITED`, doc.page.margins.left, y + 6, { lineBreak: false });
+
+  doc.end();
+  return done;
 }
 
 async function toXlsx(type, store, sensors, scope) {
@@ -141,7 +188,46 @@ tr:nth-child(even) td{background:#f4f7fa}.foot{margin-top:16px;font-size:11px;co
 <script>setTimeout(function(){window.print&&window.print();},400)</script></body></html>`;
 }
 
-module.exports = { TYPES, toXlsx, toHtml, healthIndex, buildHistory, toHistoryXlsx, toHistoryHtml };
+// ---- Reliability: MTBF (mean time between failures) and MTTR (mean time to repair) -------------
+// Built from store.alerts, which now persists across restarts (see store.js _snapshot). A "failure"
+// is any fault-type alert (temperature warning/high/critical, rapid rise, or offline) — low_battery
+// is excluded since a flat battery is routine maintenance, not an equipment fault. Needs at least 2
+// failures to compute an MTBF gap; MTTR needs at least 1 resolved/closed failure with a timestamp.
+const FAULT_SEVERITIES = ['warning', 'high', 'critical', 'rapid_rise', 'offline'];
+function reliability(store, scope, { days } = {}) {
+  const since = days ? Date.now() - days * 86400000 : 0;
+  const visible = (a) => (scope.all || (a.coach_id && scope.coaches.has(a.coach_id))) && FAULT_SEVERITIES.includes(a.severity) && Date.parse(a.at) >= since;
+  const alerts = store.alerts.filter(visible);
+  const byCoach = new Map();
+  for (const a of alerts) { const k = a.coach_id || '(unassigned)'; if (!byCoach.has(k)) byCoach.set(k, []); byCoach.get(k).push(a); }
+
+  function statsFor(list) {
+    const sorted = list.slice().sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    const failures = sorted.length;
+    let mtbf_hours = null;
+    if (failures >= 2) {
+      const gaps = [];
+      for (let i = 1; i < sorted.length; i++) gaps.push((Date.parse(sorted[i].at) - Date.parse(sorted[i - 1].at)) / 3600000);
+      mtbf_hours = +(gaps.reduce((a, b) => a + b, 0) / gaps.length).toFixed(1);
+    }
+    const resolved = sorted.filter((a) => a.resolved_at || a.closed_at);
+    let mttr_hours = null;
+    if (resolved.length) {
+      const durs = resolved.map((a) => (Date.parse(a.closed_at || a.resolved_at) - Date.parse(a.at)) / 3600000);
+      mttr_hours = +(durs.reduce((a, b) => a + b, 0) / durs.length).toFixed(2);
+    }
+    const stillOpen = failures - resolved.length;
+    return { failures, mtbf_hours, mttr_hours, resolved_count: resolved.length, still_open: stillOpen,
+      last_failure_at: sorted.length ? sorted[sorted.length - 1].at : null };
+  }
+
+  const coaches = [...byCoach.entries()].map(([coach_id, list]) => Object.assign({ coach_id }, statsFor(list)))
+    .sort((a, b) => (a.mtbf_hours == null ? 1e9 : a.mtbf_hours) - (b.mtbf_hours == null ? 1e9 : b.mtbf_hours)); // worst (most frequent failures) first
+  const fleet = statsFor(alerts);
+  return { coaches, fleet, window_days: days || null };
+}
+
+module.exports = { TYPES, toXlsx, toHtml, toPdf, healthIndex, buildHistory, toHistoryXlsx, toHistoryHtml, reliability };
 
 // ---- Historical (date-range, per-coach) reports ---------------------------
 function buildHistory(rows) {

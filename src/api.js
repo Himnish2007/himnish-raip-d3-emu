@@ -2,12 +2,16 @@
 
 const express = require('express');
 const config = require('./config');
-const { requireAuth, requireRole } = require('./auth');
+const auth = require('./auth');
+const { requireAuth, requireRole } = auth;
+const { accountRouter } = require('./account');
 const reports = require('./reports');
 
 function apiRouter(store, notifier) {
   const router = express.Router();
+  auth.setStore(store);
   router.use(requireAuth);
+  router.use(accountRouter(store));      // /me, /logout, 2FA, admin user controls
 
   const ADMIN = config.ADMIN_ROLES;            // super_admin
   const GLOBAL = config.GLOBAL_ROLES;          // super_admin, railway_hq
@@ -19,6 +23,21 @@ function apiRouter(store, notifier) {
     const all = store.allSensors();
     if (scope.all) return all;
     return all.filter((s) => s.coach_id && scope.coaches.has(s.coach_id));
+  }
+
+  // Coach that owns a sensor, even when the sensor is not currently in memory (offline / after restart):
+  // fall back to the "<coach>-TMn" id convention so the scope check can never be skipped.
+  function coachOfSensor(sensorId) {
+    const s = store.sensors.get(sensorId);
+    if (s) return s.coach_id;
+    const m = String(sensorId).match(/^(.+)-TM\d+$/);
+    return m ? m[1] : null;
+  }
+  function sensorAllowed(user, sensorId) {
+    const scope = store.scopeFor(user);
+    if (scope.all) return true;
+    const coach = coachOfSensor(sensorId);
+    return !!coach && store.canSeeCoach(user, coach);
   }
 
   // ---- Overview KPIs (scoped) -------------------------------------------
@@ -35,7 +54,9 @@ function apiRouter(store, notifier) {
       else if (cls === 'high') high++; else if (cls === 'critical') critical++;
       if (s.temperature != null && s.status === 'online') { tempSum += s.temperature; tempN++; }
     }
-    const today = new Date().toISOString().slice(0, 10);
+    const IST_MS = 5.5 * 3600 * 1000;
+    const istDay = (ms) => new Date(ms + IST_MS).toISOString().slice(0, 10);
+    const today = istDay(Date.now());
     const scope = store.scopeFor(req.user);
     const visible = (a) => scope.all || (a.coach_id && scope.coaches.has(a.coach_id));
     const alerts = store.alerts.filter(visible);
@@ -45,7 +66,7 @@ function apiRouter(store, notifier) {
       online_sensors: online, offline_sensors: offline, healthy_tms: normal, warning_tms: warning + high, critical_tms: critical,
       active_alerts: alerts.filter((a) => a.state === 'active').length,
       acknowledged_alerts: alerts.filter((a) => a.state === 'acknowledged').length,
-      todays_alerts: alerts.filter((a) => a.at.slice(0, 10) === today).length,
+      todays_alerts: alerts.filter((a) => istDay(Date.parse(a.at)) === today).length,
       avg_fleet_temp: tempN ? +(tempSum / tempN).toFixed(1) : null,
       thresholds: { warn: t.CFG_WARN_TEMP, high: t.CFG_HIGH_TEMP, crit: t.CFG_CRIT_TEMP,
         offline_seconds: t.CFG_OFFLINE_SECONDS, low_battery: t.CFG_LOW_BATTERY },
@@ -103,25 +124,47 @@ function apiRouter(store, notifier) {
     if (req.query.state) list = list.filter((a) => a.state === req.query.state);
     res.json(list.slice(0, 200));
   });
+  // Full SQL-backed history for one coach (every raise/resolve/ack/close event, not just the current
+  // alert rows) — only available when a real database is attached; otherwise an empty, honest list.
+  router.get('/alert-events', async (req, res) => {
+    const coach = req.query.coach;
+    if (!coach) return res.status(400).json({ error: 'coach query param required' });
+    if (!store.canSeeCoach(req.user, coach)) return res.status(403).json({ error: 'Not in your assigned scope' });
+    if (!store.db) return res.json({ events: [], note: 'No database attached — only the last 5000 in-memory alert rows are available via /alerts.' });
+    const from = req.query.from || new Date(Date.now() - 90 * 86400000).toISOString();
+    const to = req.query.to || new Date().toISOString();
+    try { res.json({ events: await store.db.alertHistoryForCoach(coach, from, to, 1000) }); }
+    catch (e) { res.status(500).json({ error: 'history query failed: ' + e.message }); }
+  });
+  // MTBF/MTTR per coach and fleet-wide, computed from alert history. ?days=90 limits the window
+  // (default: all retained alert history, up to the 5000-row in-memory cap).
+  router.get('/reliability', (req, res) => {
+    const days = req.query.days ? Number(req.query.days) : null;
+    res.json(reports.reliability(store, store.scopeFor(req.user), { days: days && days > 0 ? days : null }));
+  });
   router.post('/alerts/:id/ack', requireRole('super_admin', 'railway_hq', 'depot_admin', 'maintenance_eng'), (req, res) => {
     const al = store.alerts.find((x) => x.id === Number(req.params.id));
     if (!al) return res.status(404).json({ error: 'Alert not found' });
     if (!store.canSeeCoach(req.user, al.coach_id)) return res.status(403).json({ error: 'Not in your assigned scope' });
-    res.json(store.acknowledgeAlert(req.params.id, req.user.sub));
+    try { res.json(store.acknowledgeAlert(req.params.id, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); }
+  });
+  router.post('/alerts/:id/close', requireRole('super_admin', 'railway_hq', 'depot_admin', 'maintenance_eng'), (req, res) => {
+    const al = store.alerts.find((x) => x.id === Number(req.params.id));
+    if (!al) return res.status(404).json({ error: 'Alert not found' });
+    if (!store.canSeeCoach(req.user, al.coach_id)) return res.status(403).json({ error: 'Not in your assigned scope' });
+    try { res.json(store.closeAlert(req.params.id, req.user.sub, req.body || {})); } catch (e) { res.status(400).json({ error: e.message }); }
   });
 
   // ---- Series (scoped) ---------------------------------------------------
   router.get('/series/:sensorId', (req, res) => {
-    const s = store.sensors.get(req.params.sensorId);
-    if (s && !store.canSeeCoach(req.user, s.coach_id)) return res.status(403).json({ error: 'Not in your assigned scope' });
+    if (!sensorAllowed(req.user, req.params.sensorId)) return res.status(403).json({ error: 'Not in your assigned scope' });
     res.json(store.seriesFor(req.params.sensorId));
   });
 
   // ---- Long-range history (from PostgreSQL archive when available) -------
   router.get('/history/:sensorId', async (req, res) => {
-    const s = store.sensors.get(req.params.sensorId);
-    if (s && !store.canSeeCoach(req.user, s.coach_id)) return res.status(403).json({ error: 'Not in your assigned scope' });
-    const hours = Math.min(Number(req.query.hours) || 24, 24 * 400);
+    if (!sensorAllowed(req.user, req.params.sensorId)) return res.status(403).json({ error: 'Not in your assigned scope' });
+    const hours = Math.min(Math.max(Number(req.query.hours) || 24, 1), 24 * 400);
     const to = new Date();
     const from = new Date(to.getTime() - hours * 3600 * 1000);
     if (store.db) {
@@ -159,7 +202,10 @@ function apiRouter(store, notifier) {
 
   // ---- Thresholds (admin edits, everyone reads) -------------------------
   router.get('/thresholds', (req, res) => res.json(store.getThresholds()));
-  router.put('/thresholds', requireRole(...ADMIN), (req, res) => res.json(store.setThresholds(req.body || {}, req.user.sub)));
+  router.put('/thresholds', requireRole(...ADMIN), (req, res) => { try { res.json(store.setThresholds(req.body || {}, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
+
+  // Neutralise spreadsheet formulas (=, +, -, @) in user-supplied text so a CSV opened in Excel cannot run them.
+  const csvSafe = (v) => { const s = String(v); return (/^[=+\-@\t\r]/.test(s) && Number.isNaN(Number(s))) ? "'" + s : s; };
 
   // ---- Scoped CSV export (every user, only their assigned coaches) ------
   router.get('/export/readings.csv', (req, res) => {
@@ -169,14 +215,14 @@ function apiRouter(store, notifier) {
     for (const s of sensors) rows.push([s.sensor_id, s.tm_id || '', s.coach_id || '', s.emu_id || '',
       s.temperature == null ? '' : s.temperature, store.classify(s.status === 'offline' ? null : s.temperature),
       s.battery_health == null ? '' : s.battery_health, s.signal_strength == null ? '' : s.signal_strength, s.status, s.last_update]);
-    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const csv = rows.map((r) => r.map((v) => `"${csvSafe(v).replace(/"/g, '""')}"`).join(',')).join('\n');
     store.logAudit({ user: req.user.sub, action: 'export_csv', detail: `${sensors.length} sensors` });
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="raip_d3_readings.csv"');
     res.send(csv);
   });
 
-  const toCsv = (rows) => rows.map((r) => r.map((v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const toCsv = (rows) => rows.map((r) => r.map((v) => `"${csvSafe(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n');
   router.get('/export/maintenance.csv', (req, res) => {
     const list = store.listMaintenance(store.scopeFor(req.user));
     const rows = [['id', 'type', 'coach_id', 'title', 'status', 'assigned_to', 'created_by', 'created_at', 'closed_at', 'notes']];
@@ -198,12 +244,21 @@ function apiRouter(store, notifier) {
   router.post('/depots', admin, (req, res) => { try { res.json(store.upsertDepot(req.body || {}, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
   router.put('/depots/:id', admin, (req, res) => { try { res.json(store.upsertDepot({ ...req.body, depot_id: req.params.id }, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
   router.delete('/depots/:id', admin, (req, res) => { try { store.deleteDepot(req.params.id, req.user.sub); res.json({ ok: true }); } catch (e) { res.status(400).json({ error: e.message }); } });
+  // A depot's own escalation policy (rules + tiers), independent of the fleet-wide one. A depot with
+  // no override here simply uses the fleet-wide policy from /alert-config, unchanged.
+  router.get('/depots/:id/escalation', requireRole(...GLOBAL), (req, res) => res.json(store.getDepotEscalation(req.params.id) || { rules: {}, escalation_tiers: {}, using_fleet_default: true }));
+  router.put('/depots/:id/escalation', admin, (req, res) => { try { res.json(store.setDepotEscalation(req.params.id, req.body || {}, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
+  router.delete('/depots/:id/escalation', admin, (req, res) => { try { store.clearDepotEscalation(req.params.id, req.user.sub); res.json({ ok: true }); } catch (e) { res.status(400).json({ error: e.message }); } });
 
   // ---- Field device registry (self-updating RUT config), admin ----------
   router.get('/devices-registry', requireRole(...GLOBAL), (req, res) => res.json(store.listDevices()));
   router.post('/devices-registry', admin, (req, res) => { try { res.json(store.upsertDevice(req.body || {}, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
   router.put('/devices-registry/:id', admin, (req, res) => { try { res.json(store.upsertDevice({ ...req.body, device_id: req.params.id }, req.user.sub)); } catch (e) { res.status(400).json({ error: e.message }); } });
   router.delete('/devices-registry/:id', admin, (req, res) => { try { store.deleteDevice(req.params.id, req.user.sub); res.json({ ok: true }); } catch (e) { res.status(400).json({ error: e.message }); } });
+  router.post('/devices-registry/:id/rotate-key', admin, (req, res) => {
+    try { res.json(Object.assign({ ok: true, note: 'Shown once. Only needed for a manually-flashed RUT — self-update devices pick up a new key on their own next config pull automatically.' }, store.rotateDeviceKey(req.params.id, req.user.sub))); }
+    catch (e) { res.status(400).json({ error: e.message }); }
+  });
 
   // ---- System status / diagnostics --------------------------------------
   router.get('/system-status', requireRole(...GLOBAL), (req, res) => res.json(store.systemStatus()));
@@ -239,10 +294,10 @@ function apiRouter(store, notifier) {
   });
 
   // Users
-  router.get('/users', requireRole(...GLOBAL), (req, res) => res.json(store.listUsers()));
-  router.post('/users', admin, (req, res) => { try { res.json(store.createUser(req.body || {}, req.user.sub)); }
+  router.get('/users', requireRole(...GLOBAL), (req, res) => res.json(store.listUsers().map((u) => Object.assign(u, { locked_min: Math.ceil(auth.lockInfo(u.username) / 60000) }))));
+  router.post('/users', admin, async (req, res) => { try { res.json(await store.createUser(req.body || {}, req.user.sub)); }
     catch (e) { res.status(400).json({ error: e.message }); } });
-  router.put('/users/:username', admin, (req, res) => { try { res.json(store.updateUser(req.params.username, req.body || {}, req.user.sub)); }
+  router.put('/users/:username', admin, async (req, res) => { try { res.json(await store.updateUser(req.params.username, req.body || {}, req.user.sub)); }
     catch (e) { res.status(400).json({ error: e.message }); } });
   router.delete('/users/:username', admin, (req, res) => { try { store.deleteUser(req.params.username, req.user.sub); res.json({ ok: true }); }
     catch (e) { res.status(400).json({ error: e.message }); } });
@@ -262,7 +317,7 @@ function apiRouter(store, notifier) {
     catch (e) { res.status(400).json({ error: e.message }); } });
   router.put('/coach/:id', admin, (req, res) => { try { res.json(store.updateCoach(req.params.id, req.body || {}, req.user.sub)); }
     catch (e) { res.status(400).json({ error: e.message }); } });
-  router.delete('/coach/:id', admin, (req, res) => { try { store.deleteCoach(req.params.id, req.user.sub); res.json({ ok: true }); }
+  router.delete('/coach/:id', admin, (req, res) => { try { const r = store.deleteCoach(req.params.id, req.user.sub); res.json({ ok: true, orphan_devices: r.orphan_devices }); }
     catch (e) { res.status(400).json({ error: e.message }); } });
 
   router.get('/audit', requireRole(...GLOBAL), (req, res) => res.json(store.audit.slice(0, 200)));
@@ -279,7 +334,7 @@ function apiRouter(store, notifier) {
     const cfg = store.getAlertConfig().report || {};
     if (!cfg.emails || !cfg.emails.length) return res.status(400).json({ error: 'No report recipients configured' });
     const jwt = require('jsonwebtoken');
-    const token = jwt.sign({ sub: 'report-link', role: 'railway_hq' }, config.JWT_SECRET, { expiresIn: '3d' });
+    const token = jwt.sign({ sub: 'report-link', role: 'railway_hq', scope: 'report' }, config.JWT_SECRET, { expiresIn: '3d' });
     const n = await notifier.sendReportEmail(cfg.base_url || config.REPORT_BASE_URL || '', token, cfg.emails, store);
     res.json({ ok: true, sent: n });
   });
@@ -293,24 +348,6 @@ function apiRouter(store, notifier) {
     const { channel, to } = req.body || {};
     if (!channel || !to) return res.status(400).json({ error: 'channel and to required' });
     try { res.json(await notifier.sendTest(channel, to, store)); }
-    catch (e) { res.status(400).json({ error: e.message }); }
-  });
-
-  // ---- SMTP (outgoing e-mail) settings — Super Admin only ---------------
-  // Lets a Super Admin rotate the mail host/user/password from the Admin
-  // tab instead of SSH-ing into the server to edit .env. Password is never
-  // returned - GET only reports whether one is set (has_password). Taking
-  // effect is immediate (no restart): notify.js re-reads this on every send.
-  router.get('/settings/smtp', admin, (req, res) => res.json(store.getSmtpSettings()));
-  router.put('/settings/smtp', admin, (req, res) => {
-    try { res.json(store.setSmtpSettings(req.body || {}, req.user.sub)); }
-    catch (e) { res.status(400).json({ error: e.message }); }
-  });
-  router.post('/settings/smtp/clear', admin, (req, res) => res.json(store.clearSmtpSettings(req.user.sub)));
-  router.post('/settings/smtp/test', admin, async (req, res) => {
-    const to = (req.body || {}).to;
-    if (!to) return res.status(400).json({ error: 'to required' });
-    try { res.json(await notifier.sendTest('email', to, store)); }
     catch (e) { res.status(400).json({ error: e.message }); }
   });
 
@@ -332,6 +369,18 @@ function apiRouter(store, notifier) {
       res.send(Buffer.from(buf));
     } catch (e) { res.status(400).json({ error: e.message }); }
   });
+  router.get('/report/:type/pdf', async (req, res, next) => {
+    if (req.params.type === 'history') return next();
+    if (!reports.TYPES[req.params.type]) return res.status(400).json({ error: 'unknown report type' });
+    const sensors = scopedSensors(req.user);
+    try {
+      const buf = await reports.toPdf(req.params.type, store, sensors, store.scopeFor(req.user));
+      store.logAudit({ user: req.user.sub, action: 'report_pdf', detail: req.params.type });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="raip_${req.params.type}.pdf"`);
+      res.send(buf);
+    } catch (e) { res.status(400).json({ error: e.message }); }
+  });
   router.get('/report/:type/print', (req, res, next) => {
     if (req.params.type === 'history') return next();
     const sensors = scopedSensors(req.user);
@@ -345,8 +394,11 @@ function apiRouter(store, notifier) {
     const coach = req.query.coach;
     if (!coach) throw new Error('coach required');
     if (!store.canSeeCoach(req.user, coach)) { const e = new Error('Coach not in your scope'); e.code = 403; throw e; }
-    const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 7 * 86400000);
-    const to = req.query.to ? new Date(req.query.to + 'T23:59:59') : new Date();
+    const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+    // A plain YYYY-MM-DD from the date picker means that day in IST (server clock is UTC).
+    const from = req.query.from ? new Date(isDay(req.query.from) ? req.query.from + 'T00:00:00+05:30' : req.query.from) : new Date(Date.now() - 7 * 86400000);
+    const to = req.query.to ? new Date(isDay(req.query.to) ? req.query.to + 'T23:59:59+05:30' : req.query.to) : new Date();
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) throw new Error('invalid date');
     let rows = [];
     let source = 'memory';
     if (store.db) {
@@ -378,7 +430,8 @@ function apiRouter(store, notifier) {
 
   // ---- Maintenance management (scoped view; edit by admin/depot/eng) -----
   const MAINT = ['super_admin', 'depot_admin', 'maintenance_eng'];
-  router.get('/maintenance', (req, res) => res.json(store.listMaintenance(store.scopeFor(req.user))));
+  router.get('/maintenance', (req, res) => res.json(store.maintenanceWithSla(store.listMaintenance(store.scopeFor(req.user)))));
+  router.get('/maintenance/sla-summary', (req, res) => res.json(store.maintenanceSlaSummary(store.listMaintenance(store.scopeFor(req.user)))));
   router.post('/maintenance', requireRole(...MAINT), (req, res) => {
     try {
       if (!store.canSeeCoach(req.user, (req.body || {}).coach_id)) return res.status(403).json({ error: 'Coach not in your scope' });
@@ -423,7 +476,7 @@ function apiRouter(store, notifier) {
       online_sensors: online.length, offline_sensors: sensors.length - online.length,
       warning_tms: sensors.filter((s) => ['warning', 'high'].includes(cls(s))).length,
       critical_tms: sensors.filter((s) => cls(s) === 'critical').length,
-      active_alerts: store.alerts.filter((a) => a.state === 'active').length,
+      active_alerts: store.alerts.filter((a) => a.state === 'active' && (store.scopeFor(req.user).all || (a.coach_id && store.canSeeCoach(req.user, a.coach_id)))).length,
       avg_fleet_temp: temps.length ? +(temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1) : null,
     };
     const tms = sensors.map((s) => ({ tm: s.tm_id || s.sensor_id, coach: s.coach_id, emu: s.emu_id, temp: s.temperature, cls: cls(s), status: s.status, batt: s.battery_health }));

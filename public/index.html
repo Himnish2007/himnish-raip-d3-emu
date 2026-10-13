@@ -2,7 +2,8 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#006494" />
 <title>EMU Motor Coach TM Temperature Monitoring System</title>
 <link rel="icon" type="image/png" href="/assets/himnish-logo.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -155,7 +156,7 @@
   .sev.normal{background:var(--ok-bg);color:var(--ok)}
   .sev.low_battery{background:var(--warn-bg);color:var(--warn)}
   .sev.rapid_rise{background:var(--high-bg);color:var(--high)}
-  .state{font-size:11px;color:var(--muted)} .state.active{color:var(--crit)} .state.acknowledged{color:var(--ok)}
+  .state{font-size:11px;color:var(--muted)} .state.active{color:var(--crit)} .state.acknowledged{color:var(--ok)} .state.resolved{color:var(--warn)} .state.closed{color:var(--muted);font-style:italic}
   .mini{background:transparent;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:4px 9px;font-size:12px}
   .mini:hover{border-color:var(--brand);color:var(--brand)}
   select,input.inp{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
@@ -193,6 +194,131 @@
   .hm-cell{border-radius:6px;padding:12px 6px;text-align:center;color:#fff;font-family:var(--mono);font-weight:600;font-size:14px;cursor:pointer}
   .hm-head{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:center;padding-bottom:4px}
   .scalebar{height:12px;border-radius:6px;background:linear-gradient(90deg,#1e6fd0,#16a34a,#d97706,#dc2626);width:240px}
+  /* ================= Account security screens ================= */
+  #secModal{position:fixed;inset:0;background:rgba(0,25,45,.62);display:none;grid-template-columns:minmax(0,1fr);place-items:center;z-index:120;overflow-y:auto;padding:16px}
+  .sec-card{box-sizing:border-box;width:min(440px,100%);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;box-shadow:var(--shadow);position:relative;margin:auto}
+  .sec-card::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:var(--tricolor);border-radius:14px 14px 0 0}
+  .sec-card h3{margin:4px 0 6px;font-size:17px}
+  .sec-card .sub{color:var(--muted);font-size:12.5px;margin:0 0 12px;line-height:1.45}
+  .sec-card .field{margin-bottom:10px}
+  .sec-card .field input{width:100%}
+  .sec-card .row2{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .sec-card .row2 .btn,.sec-card .row2 .mini{flex:1 1 auto}
+  .sec-card .err{color:var(--crit);font-size:12.5px;min-height:18px;margin-top:6px}
+  .sec-card .okmsg{color:var(--ok);font-size:12.5px}
+  .sec-card .secret{font-family:'JetBrains Mono',monospace;font-size:17px;letter-spacing:2px;overflow-wrap:anywhere;word-break:normal;background:var(--brand-dim);border:1px dashed var(--line);border-radius:8px;padding:10px;text-align:center;margin:8px 0}
+  .sec-card pre.codes{font-family:'JetBrains Mono',monospace;font-size:14px;background:var(--brand-dim);border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0;columns:2;white-space:pre-wrap}
+  .sec-card ul.rules{margin:4px 0 10px 18px;padding:0;color:var(--muted);font-size:12px;line-height:1.5}
+  .sec-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px;margin:8px 0 12px}
+  .sec-kv b{color:var(--muted);font-weight:600}
+  .badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;border:1px solid var(--line);margin-right:4px}
+  .badge.ok{background:rgba(16,150,90,.12);color:var(--ok)} .badge.bad{background:rgba(220,40,60,.12);color:var(--crit)} .badge.warn{background:rgba(230,140,0,.14);color:#b86e00}
+  #view-assets table td .mini{margin:2px 3px 2px 0}
+
+  /* ================= Mobile / tablet responsive layer =================
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  body{-webkit-tap-highlight-color:transparent;padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+  img,svg,canvas,video{max-width:100%}
+  main{min-width:0}
+  /* grid items default to min-content width and pushed Live EMU 36px past the screen even on a 1366px laptop */
+  .coach,.tm,.car,.emu,.bg{min-width:0}
+  #login{overflow-y:auto}
+  .login-card{margin:auto}
+  .nav{-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+  .nav::-webkit-scrollbar{height:6px}
+  .nav::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+  /* touch screens swipe the tab bar, so the scrollbar is hidden there; laptops keep a thin visible one */
+  @media(hover:none),(max-width:720px){
+    .nav{scrollbar-width:none}
+    .nav::-webkit-scrollbar{display:none}
+  }
+
+  @media(max-width:720px){
+    /* --- header: two compact rows instead of one 577px-wide row that made phones zoom the page out --- */
+    .topbar{flex-wrap:wrap;gap:6px 10px;padding:8px 12px;position:static}
+    .topbar>img{height:28px!important}
+    .topbar .title{order:1;flex:1 1 0;min-width:0;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .topbar .tag,.topbar .spacer,#wallBtn{display:none!important}
+    #demoBadge{order:1;padding:1px 6px!important;font-size:10px!important}
+    #logoutBtn{order:2;padding:6px 10px;font-size:12px}
+    .topbar::after{content:"";order:3;flex-basis:100%;height:0}
+    .topbar .who{order:4;font-size:0;flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .topbar .who b,.topbar .who span{font-size:11px}
+    #whoRole::before{content:"\00a0\00b7\00a0"}
+    .topbar .live{order:5;font-size:11px}
+    .topbar .iconbtn{order:6;width:36px;height:36px}
+
+    /* --- tabs stay reachable while scrolling --- */
+    .nav{position:sticky;top:4px;z-index:19;padding:0 6px}
+    .nav button{padding:12px 12px;font-size:13px}
+
+    /* --- content --- */
+    main{padding:12px 12px 28px}
+    .view-head{margin-bottom:12px;gap:4px 10px}
+    .view-head h2{font-size:16px}
+    .view-head .desc{font-size:12px;flex-basis:100%}
+    .kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .kpi{padding:12px}
+    .kpi .label{font-size:10px}
+    .kpi .val{font-size:24px;margin-top:6px}
+    .emu{padding:12px}
+    .emu-head{flex-wrap:wrap}
+
+    /* --- tables scroll sideways inside their card instead of being clipped --- */
+    .panel{overflow-x:auto;-webkit-overflow-scrolling:touch;
+      /* soft edge shadow shows there is more to swipe sideways */
+      background:linear-gradient(to right,var(--panel) 30%,transparent) 0 0/36px 100% no-repeat local,
+                 linear-gradient(to left,var(--panel) 30%,transparent) 100% 0/36px 100% no-repeat local,
+                 radial-gradient(farthest-side at 0 50%,rgba(0,40,70,.22),transparent) 0 0/12px 100% no-repeat scroll,
+                 radial-gradient(farthest-side at 100% 50%,rgba(0,40,70,.22),transparent) 100% 0/12px 100% no-repeat scroll,
+                 var(--panel)}
+    table{font-size:12px}
+    th,td{padding:9px 10px;white-space:nowrap}
+    .mini{padding:7px 10px}
+
+    /* --- forms: 16px stops iOS zooming into a focused field; fields share the row --- */
+    select,input.inp,.field input{font-size:16px}
+    input.inp,select{max-width:100%}
+    .row{gap:10px}
+    .row .f{flex:1 1 calc(50% - 10px);min-width:0}
+    .row .f input:not([type=checkbox]):not([type=radio]),.row .f select{width:100%!important;min-width:0!important}
+    input[type=checkbox],input[type=radio]{width:auto;min-width:0;flex:none}
+    .row>button{flex:1 1 calc(50% - 10px)}
+    .btn.ghost{padding:9px 12px}
+
+    .tms{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .tm .gauge-wrap svg,.bg svg{max-width:100%;height:auto}
+
+    /* --- sensor picker: compact chips in a short scroll box so the chart is not pushed far down the page --- */
+    #sensorChecks{max-height:150px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:2px}
+    #sensorChecks label{padding:3px 6px!important;font-size:11px!important;gap:4px!important}
+
+    /* --- charts / map / heatmap --- */
+    #chart,#chart2{height:260px}
+    #mapWrap{height:calc(100vh - 300px)!important;min-height:300px}
+    .legend{gap:8px 12px}
+    .hm-row{grid-template-columns:76px repeat(4,minmax(0,1fr))}
+    .hm-lbl{font-size:10px;padding-left:0;word-break:break-all}
+    .hm-cell{padding:10px 2px;font-size:12px}
+    .scalebar{width:100%;max-width:240px}
+
+    /* --- login + footer --- */
+    .login-card{padding:22px 18px;width:min(360px,92vw)}
+    .login-card img{height:72px!important}
+    #appFooter{padding:14px 12px!important;justify-content:center;text-align:center}
+    #appFooter .desc{text-align:center!important}
+  }
+  @media(max-width:520px){
+    .consist,.train{grid-template-columns:minmax(0,1fr)}
+  }
+  @media(max-width:380px){
+    .coach{padding:10px}
+    .tm{padding:8px 6px}
+    .tm .chips{gap:3px}
+    .tm .chip .cv{font-size:12px}
+    .kpi .val{font-size:22px}
+    .nav button{padding:12px 10px;font-size:12.5px}
+  }
 </style>
 </head>
 <body>
@@ -202,13 +328,22 @@
     <div style="text-align:center;margin-bottom:14px"><img src="/assets/himnish-logo.png" alt="Himnish Limited" style="height:96px;width:auto"/></div>
     <div style="text-align:center"><h1 style="margin:0">EMU Motor Coach TM</h1>
     <div class="sub" style="margin:4px 0 20px">Temperature Monitoring System · Himnish Limited</div></div>
-    <div class="field"><label>Username</label><input id="u" autocomplete="username" /></div>
-    <div class="field"><label>Password</label><input id="p" type="password" autocomplete="current-password" /></div>
-    <button class="btn" id="loginBtn">Sign in</button>
+    <div id="loginStep1">
+      <div class="field"><label>Username</label><input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" /></div>
+      <div class="field"><label>Password</label><input id="p" type="password" autocomplete="current-password" /></div>
+      <button class="btn" id="loginBtn">Sign in</button>
+    </div>
+    <div id="loginStep2" style="display:none">
+      <div class="sub" style="margin:0 0 12px;text-align:center"><b>Two-step verification</b><br>Open your authenticator app and type the 6-digit code.</div>
+      <div class="field"><label>Code (or a recovery code)</label><input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="24" spellcheck="false" /></div>
+      <button class="btn" id="mfaBtn">Verify</button>
+      <button class="mini" id="mfaBack" style="margin-top:8px;width:100%">Back</button>
+    </div>
     <div class="err" id="loginErr"></div>
-    <div class="hint">Demo logins · <code>admin / himnish@2025</code> · <code>engineer / eng@2025</code> · <code>viewer / view@2025</code></div>
   </div>
 </div>
+
+<div id="secModal" role="dialog" aria-modal="true"><div class="sec-card"><h3 id="secTitle"></h3><div id="secBody"></div></div></div>
 
 <div id="app">
   <div class="topbar">
@@ -218,6 +353,7 @@
     <span id="demoBadge" style="display:none;font-family:var(--mono);font-size:11px;color:#fff;background:var(--warn);padding:2px 8px;border-radius:6px">DEMO MODE</span>
     <span class="spacer"></span>
     <span class="live"><span class="dot"></span><span id="clock">--:--:--</span></span>
+    <button class="iconbtn" id="acctBtn" title="My account: password, two-step verification">👤</button>
     <button class="iconbtn" id="themeBtn" title="Toggle theme">🌙</button>
     <button class="iconbtn" id="langBtn" title="Language">हिं</button>
     <button class="iconbtn" id="wallBtn" title="Wallboard / control-room mode">⛶</button>
@@ -296,9 +432,9 @@
     </section>
 
     <section class="view" id="view-alerts">
-      <div class="view-head"><h2>Alert Management Center</h2><span class="desc">SMS / Email hooks fire on raise · acknowledge to close out</span></div>
+      <div class="view-head"><h2>Alert Management Center</h2><span class="desc">SMS / Email fire once per incident, not repeatedly · condition clearing on its own auto-resolves · acknowledge, then Close with what was done</span></div>
       <div class="row"><div class="f"><label>Filter</label>
-        <select id="alertFilter"><option value="">All states</option><option value="active">Active</option><option value="acknowledged">Acknowledged</option></select></div></div>
+        <select id="alertFilter"><option value="">All states</option><option value="active">Active</option><option value="acknowledged">Acknowledged</option><option value="resolved">Resolved (auto)</option><option value="closed">Closed</option></select></div></div>
       <div class="panel"><table>
         <thead><tr><th>#</th><th>Severity</th><th>Asset</th><th>Detail</th><th>Raised</th><th>State</th><th></th></tr></thead>
         <tbody id="alertRows"></tbody></table>
@@ -351,45 +487,37 @@
     <section class="view" id="view-assets">
       <div class="view-head"><h2>Administration</h2><span class="desc" id="adminScopeNote"></span></div>
 
-      <div class="view-head"><h2 style="font-size:14px">Alert Thresholds</h2><span class="desc">Admin-editable · applies fleet-wide immediately · Log interval is the ONLY control for how often every push-mode field device logs data — takes effect on each device's next 5-min config refresh, no restart needed. A per-device override still exists in Field Devices for rare exceptions.</span></div>
+      <div class="view-head"><h2 style="font-size:14px">Alert Thresholds</h2><span class="desc">Admin-editable · applies fleet-wide immediately · Device push interval = how often every push-mode field device sends data (keeps ONLINE/OFFLINE status fast; takes effect on each device's next 5-min config refresh). Data logging interval = how often a reading is stored to the database (0 = store every push); applies immediately. No restart needed. A per-device push override still exists in Field Devices for rare exceptions.</span></div>
       <div style="background:var(--warn-bg);border:1px solid var(--warn);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--text)">
-        ⚠️ If a device is still logging at a rate that doesn't match this value, check its row in <b>Field Devices</b> — if "Interval" shows an override (not "global"), remove the override so it follows Log interval.
+        ⚠️ If a device is still logging at a rate that doesn't match this value, check its row in <b>Field Devices</b> — if "Interval" shows an override (not "global"), remove the override so it follows Device push interval.
       </div>
       <div class="panel" style="padding:16px;margin-bottom:18px">
         <div class="row" id="thRow">
           <div class="f"><label>Warning &gt; °C</label><input class="inp" id="thWarn" type="number" style="width:110px"></div>
           <div class="f"><label>High &gt; °C</label><input class="inp" id="thHigh" type="number" style="width:110px"></div>
           <div class="f"><label>Critical &gt; °C</label><input class="inp" id="thCrit" type="number" style="width:110px"></div>
-          <div class="f"><label>Offline after (s)</label><input class="inp" id="thOff" type="number" style="width:120px"></div>
+          <div class="f"><label>Offline after (s)</label><input class="inp" id="thOff" type="number" style="width:120px" title="Dashboard status only: how soon a silent sensor shows OFFLINE on screen."></div>
+          <div class="f"><label>Offline alert delay (s)</label><input class="inp" id="thOffAlert" type="number" style="width:120px" title="Email alert only (never SMS): a brief signal drop that recovers before this many seconds never sends an email at all. Must be ≥ Offline after."></div>
           <div class="f"><label>Low battery ≤ %</label><input class="inp" id="thBat" type="number" style="width:120px"></div>
           <div class="f"><label>Rapid rise ≥ °C/min</label><input class="inp" id="thRise" type="number" step="0.5" style="width:130px"></div>
-          <div class="f"><label>Log interval (s)</label><input class="inp" id="thLog" type="number" min="5" style="width:120px"></div>
+          <div class="f"><label>Device push interval (s)</label><input class="inp" id="thLog" type="number" min="5" style="width:150px"></div>
+          <div class="f"><label>Data logging interval (s)</label><input class="inp" id="thDbLog" type="number" min="0" style="width:160px" title="One stored DB row per sensor every N seconds. 0 = store every push."></div>
           <div class="f"><label>&nbsp;</label><button class="btn ghost" id="thSave">Save thresholds</button></div>
-        </div>
-      </div>
-
-      <div class="view-head"><h2 style="font-size:14px">Email (SMTP) Settings</h2><span class="desc" id="smtpSourceNote">Super Admin only · change the outgoing e-mail account from here — no SSH / server access needed. Takes effect immediately.</span></div>
-      <div class="panel" style="padding:16px;margin-bottom:18px" id="smtpPanel">
-        <div class="row" id="smtpRow">
-          <div class="f"><label>SMTP Host</label><input class="inp" id="smtpHost" placeholder="smtpout.secureserver.net" style="width:220px"></div>
-          <div class="f"><label>Port</label><input class="inp" id="smtpPort" type="number" style="width:90px"></div>
-          <div class="f"><label>Username (e-mail)</label><input class="inp" id="smtpUser" placeholder="alerts@himnishindia.com" style="width:220px"></div>
-          <div class="f"><label>Password</label><input class="inp" id="smtpPass" type="password" placeholder="leave blank to keep current" style="width:220px"></div>
-          <div class="f"><label>From (optional)</label><input class="inp" id="smtpFrom" placeholder="defaults to username" style="width:220px"></div>
-        </div>
-        <div class="row" style="margin-top:10px;align-items:center">
-          <button class="btn ghost" id="smtpSave">Save</button>
-          <button class="mini" id="smtpRevert" style="margin-left:8px">Revert to server .env</button>
-          <input class="inp" id="smtpTestTo" placeholder="send test email to..." style="width:220px;margin-left:16px">
-          <button class="mini" id="smtpTestBtn" style="margin-left:6px">Send test</button>
-          <span class="desc" id="smtpNote" style="margin-left:12px"></span>
         </div>
       </div>
 
       <div class="view-head"><h2 style="font-size:14px">Users &amp; Roles</h2><button class="mini" id="addUserBtn" style="margin-left:auto">+ Add user</button></div>
       <div class="panel" style="margin-bottom:18px"><table>
-        <thead><tr><th>Username</th><th>Role</th><th>Email</th><th>Mobile</th><th>Assigned EMUs</th><th>Assigned Coaches</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>2-step</th><th>Last sign-in</th><th>Email</th><th>Mobile</th><th>Assigned EMUs</th><th>Assigned Coaches</th><th>Actions</th></tr></thead>
         <tbody id="adminUsers"></tbody></table></div>
+
+      <div id="secPanel" style="display:none">
+        <div class="view-head"><h2 style="font-size:14px">Sign-in security events</h2><button class="mini" id="secRefresh" style="margin-left:auto">Refresh</button></div>
+        <div class="desc" style="margin:-4px 0 8px">Wrong passwords, lockouts, password changes, forced sign-outs. Repeated failures for one user or from one address are the sign of a guessing attack.</div>
+        <div class="panel" style="margin-bottom:18px;max-height:340px;overflow:auto"><table>
+          <thead><tr><th>Time</th><th>Event</th><th>User</th><th>Address</th><th>Details</th></tr></thead>
+          <tbody id="secEvents"></tbody></table></div>
+      </div>
 
       <div class="view-head"><h2 style="font-size:14px">EMUs</h2><button class="mini" id="addEmuBtn" style="margin-left:auto">+ Add EMU</button></div>
       <div class="panel" style="margin-bottom:18px"><table>
@@ -448,12 +576,12 @@
 
       <div class="view-head"><h2 style="font-size:14px">Alert Routing Rules</h2><span class="desc">Per severity: channels, recipients, escalation</span></div>
       <div class="panel" style="margin-bottom:18px;overflow-x:auto"><table>
-        <thead><tr><th>Severity</th><th>Email</th><th>SMS</th><th>Email recipients</th><th>Phone recipients</th><th>Escalate to</th><th>After (min)</th><th></th></tr></thead>
+        <thead><tr><th>Severity</th><th>Email</th><th>SMS</th><th>Email recipients</th><th>Phone recipients</th><th>Escalation chain (L1→L2→L3→L4)</th><th></th></tr></thead>
         <tbody id="ruleRows"></tbody></table></div>
 
-      <div class="view-head"><h2 style="font-size:14px">Escalation Tiers</h2><span class="desc">L1 Maintenance → L2 Supervisor → L3 Incharge → L4 Railway HQ</span></div>
+      <div class="view-head"><h2 style="font-size:14px">Escalation Tiers</h2><span class="desc">Scoped by coach/EMU: only staff ASSIGNED to that alert's coach and holding the tier's role are escalated to. "Fixed" recipients (optional) see every escalation at that level, fleet-wide.</span></div>
       <div class="panel" style="margin-bottom:18px"><table>
-        <thead><tr><th>Tier</th><th>Name</th><th>Emails</th><th>Phones</th><th></th></tr></thead>
+        <thead><tr><th>Tier</th><th>Name</th><th>Scoped to role</th><th>Fixed emails</th><th>Fixed phones</th><th></th></tr></thead>
         <tbody id="tierRows"></tbody></table></div>
 
       <div class="view-head"><h2 style="font-size:14px">Templates</h2></div>
@@ -530,9 +658,14 @@
         <thead><tr><th>Coach</th><th>EMU</th><th>Sensors</th><th>Avg Temp</th><th>Worst</th><th>Health Score</th></tr></thead>
         <tbody id="coachHealthRows"></tbody></table></div>
       <div class="view-head"><h2 style="font-size:14px">EMU Health</h2></div>
-      <div class="panel"><table>
+      <div class="panel" style="margin-bottom:18px"><table>
         <thead><tr><th>EMU</th><th>Coaches</th><th>Sensors</th><th>Avg Temp</th><th>Health Score</th></tr></thead>
         <tbody id="emuHealthRows"></tbody></table></div>
+      <div class="view-head"><h2 style="font-size:14px">Reliability — MTBF / MTTR (worst first)</h2></div>
+      <div class="desc" style="margin:-4px 0 8px">MTBF = average time between failures (higher is better) · MTTR = average time to repair (lower is better) · from alert history</div>
+      <div class="panel"><table>
+        <thead><tr><th>Coach</th><th>Failures</th><th>MTBF</th><th>MTTR</th><th>Resolved</th><th>Still open</th><th>Last failure</th></tr></thead>
+        <tbody id="reliabilityRows"></tbody></table></div>
     </section>
 
     <section class="view" id="view-assistant">
@@ -608,6 +741,8 @@
 
   function $(s){return document.querySelector(s);}
   function el(t,c,txt){var e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e;}
+  // HTML-escape any value that is concatenated into innerHTML / popups (device- and admin-supplied text is untrusted).
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   // ---- Half-circle temperature gauge (0-110°C scale) ----
   // ---- Half-circle needle temperature gauge — 3 colour zones (green/amber/red) + needle, like LOCO TM CMS ----
   var THRESH_CACHE=null;
@@ -659,29 +794,59 @@
     opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json'},opts.headers||{},TOKEN?{Authorization:'Bearer '+TOKEN}:{});
     var r=await fetch('/api/v1'+path,opts);
     if(r.status===401&&TOKEN){doLogout();throw new Error('Session expired');}
-    if(!r.ok){var e=await r.json().catch(function(){return{};});throw new Error(e.error||('HTTP '+r.status));}
+    if(!r.ok){var e=await r.json().catch(function(){return{};});
+      if(r.status===403&&e.code==='PASSWORD_CHANGE_REQUIRED'&&USER)openPasswordModal({forced:true,onDone:function(){renderView();}});
+      throw new Error(e.error||('HTTP '+r.status));}
     return r.json();
   }
 
   $('#loginBtn').addEventListener('click',login);
   $('#p').addEventListener('keydown',function(e){if(e.key==='Enter')login();});
+  $('#mfaBtn').addEventListener('click',loginMfaStep);
+  $('#mfaCode').addEventListener('keydown',function(e){if(e.key==='Enter')loginMfaStep();});
+  $('#mfaBack').addEventListener('click',function(){loginReset();$('#p').focus();});
+  var MFA_TOKEN=null;
+  function loginError(m){$('#loginErr').textContent=m||'';}
+  function loginReset(){MFA_TOKEN=null;$('#loginStep1').style.display='';$('#loginStep2').style.display='none';$('#p').value='';$('#mfaCode').value='';loginError('');}
+  async function postLogin(url,body){
+    var res=await fetch('/api/v1'+url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var data=await res.json().catch(function(){return{};});
+    if(!res.ok)throw new Error(data.error||('Sign-in failed (HTTP '+res.status+')'));
+    return data;
+  }
   async function login(){
-    $('#loginErr').textContent='';
+    loginError('');$('#loginBtn').disabled=true;
     try{
-      var res=await fetch('/api/v1/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('#u').value.trim(),password:$('#p').value})});
-      if(!res.ok)throw new Error('Invalid credentials');
-      var data=await res.json();TOKEN=data.token;USER=data.user;
-      $('#login').style.display='none';$('#app').style.display='block';
-      $('#whoName').textContent=USER.username;$('#whoRole').textContent=ROLE_LABELS[USER.role]||USER.role;
-      var canAdmin=['super_admin','railway_hq'].indexOf(USER.role)>=0;
-      document.querySelector('.nav button[data-view="assets"]').style.display=canAdmin?'':'none';
-      document.querySelector('.nav button[data-view="notify"]').style.display=canAdmin?'':'none';
-      document.querySelector('.nav button[data-view="audit"]').style.display=canAdmin?'':'none';
-      document.querySelector('.nav button[data-view="topology"]').style.display=(USER.role==='super_admin')?'':'none';
-      bindAdminOnce();
-      fetch('/healthz').then(function(r){return r.json();}).then(function(h){$('#demoBadge').style.display=h.demo?'':'none';}).catch(function(){});
-      startClock();switchView('overview');startPolling();startIdleTimer();
-    }catch(err){$('#loginErr').textContent=err.message;}
+      var data=await postLogin('/login',{username:$('#u').value.trim(),password:$('#p').value});
+      if(data.mfa_required){MFA_TOKEN=data.mfa_token;$('#p').value='';$('#loginStep1').style.display='none';$('#loginStep2').style.display='';$('#mfaCode').value='';$('#mfaCode').focus();return;}
+      await afterLogin(data);
+    }catch(err){loginError(err.message);}
+    finally{$('#loginBtn').disabled=false;}
+  }
+  async function loginMfaStep(){
+    loginError('');$('#mfaBtn').disabled=true;
+    try{await afterLogin(await postLogin('/login/mfa',{mfa_token:MFA_TOKEN,code:$('#mfaCode').value}));}
+    catch(err){loginError(err.message);if(/expired|start again|sign in again|finish the sign-in/i.test(err.message)){$('#loginStep1').style.display='';$('#loginStep2').style.display='none';}}   // only a dead step sends the user back; "Wrong code ... try again" stays on this step
+    finally{$('#mfaBtn').disabled=false;}
+  }
+  async function afterLogin(data){
+    TOKEN=data.token;USER=data.user;MFA_TOKEN=null;$('#p').value='';$('#mfaCode').value='';
+    // a first-time / reset / default password must be replaced before anything else is shown
+    if(USER.must_change){openPasswordModal({forced:true,onDone:function(){if(USER.must_setup_2fa)open2faSetup({forced:true,onDone:enterApp});else enterApp();}});return;}
+    if(USER.must_setup_2fa){open2faSetup({forced:true,onDone:enterApp});return;}
+    enterApp();
+  }
+  function enterApp(){
+    $('#login').style.display='none';$('#app').style.display='block';
+    $('#whoName').textContent=USER.username;$('#whoRole').textContent=ROLE_LABELS[USER.role]||USER.role;
+    var canAdmin=['super_admin','railway_hq'].indexOf(USER.role)>=0;
+    document.querySelector('.nav button[data-view="assets"]').style.display=canAdmin?'':'none';
+    document.querySelector('.nav button[data-view="notify"]').style.display=canAdmin?'':'none';
+    document.querySelector('.nav button[data-view="audit"]').style.display=canAdmin?'':'none';
+    document.querySelector('.nav button[data-view="topology"]').style.display=(USER.role==='super_admin')?'':'none';
+    bindAdminOnce();
+    fetch('/healthz').then(function(r){return r.json();}).then(function(h){$('#demoBadge').style.display=h.demo?'':'none';}).catch(function(){});
+    startClock();switchView('overview');startPolling();startIdleTimer();
   }
   $('#logoutBtn').addEventListener('click',doLogout);
   $('#langBtn').addEventListener('click',toggleLang);
@@ -719,27 +884,56 @@
     var lo=$('#logoutBtn');if(lo)tr(lo);
   }
   function toggleLang(){LANG=(LANG==='en')?'hi':'en';applyLang();$('#langBtn').textContent=(LANG==='en')?'हिं':'EN';}
-  function doLogout(){TOKEN=null;USER=null;if(POLL)clearInterval(POLL);$('#app').style.display='none';$('#login').style.display='grid';$('#p').value='';}
+  function doLogout(){
+    var t=TOKEN;TOKEN=null;USER=null;
+    if(t){try{fetch('/api/v1/logout',{method:'POST',headers:{Authorization:'Bearer '+t}}).catch(function(){});}catch(e){}}   // the token dies on the server too
+    if(POLL)clearInterval(POLL);
+    if(typeof exitWall==='function'){try{exitWall();}catch(e){}}
+    $('#app').style.display='none';$('#login').style.display='grid';closeModal();loginReset();
+  }
 
+  // mouse users: the vertical wheel scrolls the tab bar sideways when all 18 tabs do not fit (small laptops)
+  $('#nav').addEventListener('wheel',function(e){
+    var n=$('#nav');if(n.scrollWidth<=n.clientWidth||Math.abs(e.deltaX)>Math.abs(e.deltaY))return;
+    n.scrollLeft+=e.deltaY;e.preventDefault();
+  },{passive:false});
   $('#nav').addEventListener('click',function(e){var b=e.target.closest('button[data-view]');if(b)switchView(b.dataset.view);});
   function switchView(v){
     if(v==='topology'&&(!USER||USER.role!=='super_admin'))v='overview'; // Topology is Super Admin only
     CURRENT=v;
     document.querySelectorAll('.nav button[data-view]').forEach(function(b){b.classList.toggle('active',b.dataset.view===v);});
     document.querySelectorAll('.view').forEach(function(s){s.classList.toggle('active',s.id==='view-'+v);});
+    // phones: keep the chosen tab visible in the scrolling tab bar and start the new view at the top
+    var ab=document.querySelector('.nav button.active'),nv=$('#nav');
+    if(ab&&nv&&nv.scrollTo)nv.scrollTo({left:ab.offsetLeft-(nv.clientWidth-ab.offsetWidth)/2,behavior:'smooth'});
+    if(window.innerWidth<=720)window.scrollTo(0,0);
     renderView();            // always render the newly opened view
   }
+  // rotation / window resize: re-fit the map and redraw width-dependent charts
+  var LAST_W=window.innerWidth,RS_T=null;
+  window.addEventListener('resize',function(){clearTimeout(RS_T);RS_T=setTimeout(function(){
+    if(window.innerWidth===LAST_W)return;LAST_W=window.innerWidth;
+    try{if(MAP)MAP.invalidateSize();}catch(e){}
+    if(USER&&(CURRENT==='analytics'||CURRENT==='live'||CURRENT==='twin'))renderView();
+  },250);});
   function startClock(){setInterval(function(){$('#clock').textContent=new Date().toLocaleTimeString('en-GB');},1000);}
 
   // Session auto-logout after inactivity (tender security). Warns 1 min before.
-  var SESSION_IDLE_MIN=30,IDLE_TIMER=null,IDLE_WARN=null,IDLE_LAST=Date.now();
+  var SESSION_IDLE_MIN=1440,IDLE_TIMER=null,IDLE_WARN=null,IDLE_LAST=Date.now();
   function resetIdle(){
     IDLE_LAST=Date.now();
     if(IDLE_WARN){clearTimeout(IDLE_WARN);IDLE_WARN=null;}
     if(IDLE_TIMER){clearTimeout(IDLE_TIMER);}
     if(!TOKEN)return;
-    IDLE_WARN=setTimeout(function(){ if(TOKEN) alert('Session about to expire due to inactivity. Move the mouse or press a key to stay signed in.'); },(SESSION_IDLE_MIN-1)*60000);
-    IDLE_TIMER=setTimeout(function(){ if(TOKEN){ doLogout(); alert('Signed out due to '+SESSION_IDLE_MIN+' minutes of inactivity.'); } },SESSION_IDLE_MIN*60000);
+    // A wall display is meant to run unattended: no one is there to dismiss a blocking alert(), which would
+    // otherwise freeze the whole wallboard (setInterval callbacks pause behind a JS alert) until someone did.
+    function isWall(){return $('#wallboard')&&$('#wallboard').style.display==='block';}
+    IDLE_WARN=setTimeout(function(){ if(TOKEN&&!isWall()) alert('Session about to expire due to inactivity. Move the mouse or press a key to stay signed in.'); },(SESSION_IDLE_MIN-1)*60000);
+    IDLE_TIMER=setTimeout(function(){
+      if(!TOKEN)return;
+      if(isWall()){resetIdle();return;}
+      doLogout();alert('Signed out due to '+SESSION_IDLE_MIN+' minutes of inactivity.');
+    },SESSION_IDLE_MIN*60000);
   }
   function startIdleTimer(){
     ['mousemove','keydown','click','scroll','touchstart'].forEach(function(ev){document.addEventListener(ev,resetIdle,{passive:true});});
@@ -797,6 +991,17 @@
       ['Healthy TMs',k.healthy_tms,'','ok'],['Warning TMs',k.warning_tms,'',k.warning_tms?'warn':''],['Critical TMs',k.critical_tms,'',k.critical_tms?'crit':''],
       ['Active Alerts',k.active_alerts,'',k.active_alerts?'crit':''],['Acknowledged',k.acknowledged_alerts,'',''],["Today's Alarms",k.todays_alerts,'',''],
       ['Avg Fleet Temp',k.avg_fleet_temp==null?'—':k.avg_fleet_temp,'°C','accent']];
+    // Fleet reliability + maintenance SLA compliance — one-screen executive summary (HQ / depot roles
+    // see the same cards, automatically scoped to what they can see, same as the rest of the dashboard).
+    try{
+      var rel=await api('/reliability'),sla=await api('/maintenance/sla-summary');
+      var slaTotal=sla.open_total+sla.closed_total;
+      var slaPct=slaTotal?Math.round(100*(sla.open_on_track+sla.closed_on_time)/slaTotal):100;
+      cards.push(['Fleet MTBF',rel.fleet.mtbf_hours==null?'—':fmtHours(rel.fleet.mtbf_hours),'','']);
+      cards.push(['Fleet MTTR',rel.fleet.mttr_hours==null?'—':fmtHours(rel.fleet.mttr_hours),'','']);
+      cards.push(['Maintenance SLA',slaPct+'%','',slaPct<80?'crit':slaPct<95?'warn':'ok']);
+      cards.push(['Overdue Work Orders',sla.open_overdue,'',sla.open_overdue?'crit':'']);
+    }catch(e){/* reliability/SLA cards are a nice-to-have; never block the core overview on them */}
     var g=$('#kpis');g.innerHTML='';
     cards.forEach(function(c){var d=el('div','kpi '+(c[3]||''));d.appendChild(el('div','label',c[0]));var v=el('div','val'+(c[2]?' unit':''),c[1]);if(c[2])v.dataset.unit=c[2];d.appendChild(v);g.appendChild(d);});
   }
@@ -1005,7 +1210,8 @@
     var f=$('#woFilter').value;var shown=f?list.filter(function(m){return m.status===f;}):list;
     var st=$('#maintStats');st.innerHTML='';
     [['Total',list.length,'accent'],['Open',list.filter(function(m){return m.status==='open';}).length,'warn'],
-     ['In Progress',list.filter(function(m){return m.status==='in_progress';}).length,''],['Closed',list.filter(function(m){return m.status==='closed';}).length,'ok']].forEach(function(c){
+     ['In Progress',list.filter(function(m){return m.status==='in_progress';}).length,''],['Closed',list.filter(function(m){return m.status==='closed';}).length,'ok'],
+     ['Overdue (SLA)',list.filter(function(m){return m.overdue;}).length,list.filter(function(m){return m.overdue;}).length?'crit':'ok']].forEach(function(c){
       var d=el('div','kpi '+(c[2]||''));d.appendChild(el('div','label',c[0]));d.appendChild(el('div','val',c[1]));st.appendChild(d);});
     var tb=$('#woRows');tb.innerHTML='';$('#woEmpty').style.display=shown.length?'none':'block';
     var canEdit=['super_admin','depot_admin','maintenance_eng'].indexOf(USER.role)>=0;
@@ -1016,7 +1222,10 @@
       tr.appendChild(el('td',null,m.assigned_to||'—'));
       var stt=el('td');var cl=m.status==='closed'?'ok':m.status==='in_progress'?'warn':'crit';
       var sp=el('span','sev',m.status.replace('_',' '));
-      sp.style.background='var(--'+cl+'-bg)';sp.style.color='var(--'+cl+')';stt.appendChild(sp);tr.appendChild(stt);
+      sp.style.background='var(--'+cl+'-bg)';sp.style.color='var(--'+cl+')';stt.appendChild(sp);
+      if(m.overdue){stt.appendChild(document.createTextNode(' '));var ob=el('span','badge bad','Overdue');ob.title='Past the '+m.sla_target_hours+'h target for this priority/type';stt.appendChild(ob);}
+      else if(m.closed_late){stt.appendChild(document.createTextNode(' '));stt.appendChild(el('span','badge warn','Closed late'));}
+      tr.appendChild(stt);
       tr.appendChild(el('td',null,new Date(m.created_at).toLocaleDateString('en-GB')));
       var ac=el('td');
       if(canEdit)ac.appendChild(mkBtn('Update',function(){updateWo(m);}));
@@ -1031,12 +1240,16 @@
     var type=prompt('Type: work_order / preventive / corrective / calibration / sensor_replacement / battery_replacement','work_order');
     var title=prompt('Title / description:','');if(!title)return;
     var assigned=prompt('Assigned to (optional):','');
-    woCall('/maintenance','POST',{coach_id:coach,type:type,title:title,assigned_to:assigned||null});
+    var priority=prompt('Priority (sets the SLA target): critical=4h, high=24h, normal=72h, low=168h\nLeave blank to use the type\'s own default.','');
+    if(priority&&['critical','high','normal','low'].indexOf(priority.trim())<0){alert('Priority must be one of: critical, high, normal, low (or leave blank).');return;}
+    woCall('/maintenance','POST',{coach_id:coach,type:type,title:title,assigned_to:assigned||null,priority:priority?priority.trim():null});
   }
   function updateWo(m){
     var status=prompt('Status: open / in_progress / closed',m.status);if(!status)return;
     var notes=prompt('Notes (optional):',m.notes||'');
-    woCall('/maintenance/'+m.id,'PUT',{status:status,notes:notes});
+    var priority=prompt('Priority (blank = use the type\'s default SLA): critical / high / normal / low',m.priority||'');
+    if(priority&&['critical','high','normal','low'].indexOf(priority.trim())<0){alert('Priority must be one of: critical, high, normal, low (or leave blank).');return;}
+    woCall('/maintenance/'+m.id,'PUT',{status:status,notes:notes,priority:priority?priority.trim():null});
   }
 
   // ---- GIS Depot Map (Leaflet + OpenStreetMap) ----
@@ -1059,13 +1272,13 @@
       var bad=d.coaches.some(function(c){return c.status==='offline'||c.status==='no-data'||c.worst==='critical'||c.worst==='high';});
       var color=!d.coaches.length?'#888':(bad?'#dc2626':'#16a34a');
       var mk=L.circleMarker([d.lat,d.lng],{radius:11,color:color,fillColor:color,fillOpacity:0.85,weight:2});
-      var html='<b>'+d.name+'</b> ('+d.depot_id+')<br>'+(d.region||'')+'<hr style="margin:4px 0">';
-      html+=d.coaches.length?d.coaches.map(function(c){return c.coach_id+' — <b>'+c.status+'</b>'+(c.worst&&c.worst!=='no-data'&&c.worst!=='normal'?' ('+c.worst+')':'');}).join('<br>'):'<i>No coaches assigned</i>';
+      var html='<b>'+esc(d.name)+'</b> ('+esc(d.depot_id)+')<br>'+esc(d.region||'')+'<hr style="margin:4px 0">';
+      html+=d.coaches.length?d.coaches.map(function(c){return esc(c.coach_id)+' — <b>'+esc(c.status)+'</b>'+(c.worst&&c.worst!=='no-data'&&c.worst!=='normal'?' ('+esc(c.worst)+')':'');}).join('<br>'):'<i>No coaches assigned</i>';
       mk.bindPopup(html);mk.addTo(MAP);MAP_MARKERS.push(mk);
     });
     setTimeout(function(){try{MAP.invalidateSize();}catch(e){}},120);
     var noGeo=data.filter(function(d){return d.lat==null||d.lng==null;});
-    $('#noGeo').innerHTML=noGeo.length?('<b>Not on map</b> (add Latitude/Longitude in Admin → Depots): '+noGeo.map(function(d){return d.depot_id;}).join(', ')):'';
+    $('#noGeo').innerHTML=noGeo.length?('<b>Not on map</b> (add Latitude/Longitude in Admin → Depots): '+noGeo.map(function(d){return esc(d.depot_id);}).join(', ')):'';
     $('#mapNote').textContent=withGeo.length?'Click a depot marker to see its coaches and status.':'No depot has coordinates yet — add lat/lng in Admin → Depots.';
   }
 
@@ -1169,10 +1382,28 @@
       tr.appendChild(el('td',null,new Date(a.at).toLocaleString('en-GB')));
       var st=el('td');st.appendChild(el('span','state '+a.state,a.state));tr.appendChild(st);
       var ac=el('td');
-      if(a.state==='active'&&canAck){var btn=el('button','mini','Acknowledge');btn.addEventListener('click',async function(){try{await api('/alerts/'+a.id+'/ack',{method:'POST'});renderAlerts();updateBadge();}catch(err){alert(err.message);}});ac.appendChild(btn);}
-      else if(a.acknowledged_by){ac.appendChild(el('span','state','by '+a.acknowledged_by));}
+      if((a.state==='active'||a.state==='resolved')&&canAck){
+        var btn=el('button','mini','Acknowledge');
+        btn.addEventListener('click',async function(){try{await api('/alerts/'+a.id+'/ack',{method:'POST'});renderAlerts();updateBadge();}catch(err){alert(err.message);}});
+        ac.appendChild(btn);
+      }
+      if((a.state==='active'||a.state==='acknowledged'||a.state==='resolved')&&canAck){
+        var cbtn=el('button','mini','Close');
+        cbtn.addEventListener('click',function(){closeAlertPrompt(a);});
+        ac.appendChild(cbtn);
+      }
+      if(a.state==='closed'){ac.appendChild(el('span','state',a.action_taken?('Closed: '+a.action_taken):('by '+(a.closed_by||''))));}
+      else if(a.state==='resolved'){ac.appendChild(el('span','state',a.resolved_reason||'auto-resolved'));}
+      else if(a.acknowledged_by){ac.appendChild(el('span','state','ack by '+a.acknowledged_by));}
       tr.appendChild(ac);tb.appendChild(tr);
     });
+  }
+  function closeAlertPrompt(a){
+    var action=prompt('What was done about this alert? (required — shown in the alert history)\n'+a.message,'');
+    if(action===null)return;
+    if(!action.trim()){alert('An action is required to close an alert.');return;}
+    var reason=prompt('Reason / root cause (optional):','');
+    api('/alerts/'+a.id+'/close',{method:'POST',body:JSON.stringify({action:action,reason:reason||''})}).then(function(){renderAlerts();updateBadge();}).catch(function(err){alert(err.message);});
   }
 
   async function renderAnalytics(){
@@ -1190,7 +1421,7 @@
   }
   async function drawCompare(){
     var svg=d3.select('#chart2');svg.selectAll('*').remove();$('#cmpLegend').innerHTML='';
-    var box=$('#chart2').getBoundingClientRect();var W=box.width||800,H=340,m={t:16,r:18,b:30,l:42};svg.attr('viewBox','0 0 '+W+' '+H);
+    var box=$('#chart2').getBoundingClientRect();var W=box.width||800,H=box.height||340,m={t:16,r:18,b:30,l:42};svg.attr('viewBox','0 0 '+W+' '+H);
     if(!CMP.length){svg.append('text').attr('x',W/2).attr('y',H/2).attr('fill','#8a96aa').attr('text-anchor','middle').text('Tick one or more sensors to compare');return;}
     var k=await api('/overview');var th=k.thresholds;var seriesList=[];
     for(var i=0;i<CMP.length;i++){var d=await api('/series/'+encodeURIComponent(CMP[i]));seriesList.push({id:CMP[i],pts:d.map(function(p){return{t:new Date(p.t),v:p.temperature};}).filter(function(p){return p.v!=null;})});}
@@ -1198,7 +1429,7 @@
     if(!all.length){svg.append('text').attr('x',W/2).attr('y',H/2).attr('fill','#8a96aa').attr('text-anchor','middle').text('No samples yet');return;}
     var x=d3.scaleTime().domain(d3.extent(all,function(d){return d.t;})).range([m.l,W-m.r]);
     var y=d3.scaleLinear().domain([Math.min(d3.min(all,function(d){return d.v;})-3,20),Math.max(d3.max(all,function(d){return d.v;}),th.crit+5)]).range([H-m.b,m.t]);
-    svg.append('g').attr('class','axis').attr('transform','translate(0,'+(H-m.b)+')').call(d3.axisBottom(x).ticks(6).tickFormat(d3.timeFormat('%H:%M:%S')));
+    svg.append('g').attr('class','axis').attr('transform','translate(0,'+(H-m.b)+')').call(d3.axisBottom(x).ticks(Math.max(2,Math.min(6,Math.floor(W/95)))).tickFormat(d3.timeFormat(W<520?'%H:%M':'%H:%M:%S')));
     svg.append('g').attr('class','axis').attr('transform','translate('+m.l+',0)').call(d3.axisLeft(y).ticks(6));
     [[th.warn,'#d97706'],[th.high,'#ea580c'],[th.crit,'#dc2626']].forEach(function(b){svg.append('line').attr('class','thline').attr('x1',m.l).attr('x2',W-m.r).attr('y1',y(b[0])).attr('y2',y(b[0])).attr('stroke',b[1]);});
     var line=d3.line().x(function(d){return x(d.t);}).y(function(d){return y(d.v);}).curve(d3.curveMonotoneX);
@@ -1248,62 +1479,52 @@
     $('#restoreFile').addEventListener('change',doRestore);
     $('#bulkBtn').addEventListener('click',doBulkImport);
     $('#refreshStatus').addEventListener('click',renderSysStatus);
-    $('#smtpSave').addEventListener('click',saveSmtpSettings);
-    $('#smtpRevert').addEventListener('click',revertSmtpSettings);
-    $('#smtpTestBtn').addEventListener('click',testSmtpSettings);
-  }
-  async function renderSmtpSettings(){
-    try{
-      var s=await api('/settings/smtp');
-      $('#smtpHost').value=s.host||'';$('#smtpPort').value=s.port||587;$('#smtpUser').value=s.user||'';$('#smtpFrom').value=s.from||'';
-      $('#smtpPass').value='';$('#smtpPass').placeholder=s.has_password?'•••••• saved — leave blank to keep':'not set — leave blank to stay in dry-run';
-      $('#smtpSourceNote').textContent='Source: '+(s.source==='dashboard'?'dashboard (saved here)':'server .env')+(s.updated_at?' · last changed '+new Date(s.updated_at).toLocaleString('en-GB'):'')+' · Super Admin only · takes effect immediately.';
-    }catch(e){}
-  }
-  async function saveSmtpSettings(){
-    var body={host:$('#smtpHost').value.trim(),port:+$('#smtpPort').value||587,user:$('#smtpUser').value.trim(),from:$('#smtpFrom').value.trim()};
-    var pass=$('#smtpPass').value;if(pass)body.password=pass;
-    try{await api('/settings/smtp',{method:'PUT',body:JSON.stringify(body)});$('#smtpSave').textContent='Saved ✓';setTimeout(function(){$('#smtpSave').textContent='Save';},1500);renderSmtpSettings();}
-    catch(e){alert(e.message);}
-  }
-  async function revertSmtpSettings(){
-    if(!confirm('Revert to the server .env e-mail settings? Any dashboard-saved host/user/password will be cleared.'))return;
-    try{await api('/settings/smtp/clear',{method:'POST',body:'{}'});renderSmtpSettings();}catch(e){alert(e.message);}
-  }
-  async function testSmtpSettings(){
-    var to=$('#smtpTestTo').value.trim();if(!to){alert('Enter an address to send the test to');return;}
-    $('#smtpNote').textContent='Sending...';
-    try{var r=await api('/settings/smtp/test',{method:'POST',body:JSON.stringify({to:to})});
-      $('#smtpNote').textContent=r.ok?(r.note?('Sent — '+r.note):'Sent ✓'):('Failed: '+(r.error||''));
-    }catch(e){$('#smtpNote').textContent='Failed: '+e.message;}
   }
   function isAdmin(){return USER&&USER.role==='super_admin';}
 
   async function renderAdmin(){
     var ro=!isAdmin();
     $('#adminScopeNote').textContent=ro?'Read-only view — editing requires Super Admin':'Super Admin · full master-data control';
-    ['addUserBtn','addEmuBtn','addCoachBtn','thSave','addDepotBtn','bulkBtn','addDeviceBtn','smtpSave','smtpRevert','smtpTestBtn','smtpTestTo'].forEach(function(id){$('#'+id).style.display=ro?'none':'';});
-    ['smtpHost','smtpPort','smtpUser','smtpPass','smtpFrom'].forEach(function(id){$('#'+id).disabled=ro;});
-    if(ro){$('#smtpSourceNote').textContent='Read-only — Super Admin can change the e-mail account here.';}
-    else renderSmtpSettings();
+    ['addUserBtn','addEmuBtn','addCoachBtn','thSave','addDepotBtn','bulkBtn','addDeviceBtn'].forEach(function(id){$('#'+id).style.display=ro?'none':'';});
     // thresholds
     var th=await api('/thresholds');
     $('#thWarn').value=th.CFG_WARN_TEMP;$('#thHigh').value=th.CFG_HIGH_TEMP;$('#thCrit').value=th.CFG_CRIT_TEMP;
-    $('#thOff').value=th.CFG_OFFLINE_SECONDS;$('#thBat').value=th.CFG_LOW_BATTERY;$('#thRise').value=th.CFG_RISE_RATE!=null?th.CFG_RISE_RATE:3;
+    $('#thOff').value=th.CFG_OFFLINE_SECONDS;$('#thOffAlert').value=th.CFG_OFFLINE_ALERT_SECONDS!=null?th.CFG_OFFLINE_ALERT_SECONDS:1800;$('#thBat').value=th.CFG_LOW_BATTERY;$('#thRise').value=th.CFG_RISE_RATE!=null?th.CFG_RISE_RATE:3;
     $('#thLog').value=th.CFG_LOG_INTERVAL!=null?th.CFG_LOG_INTERVAL:20;
-    ['thWarn','thHigh','thCrit','thOff','thBat','thRise','thLog'].forEach(function(id){$('#'+id).disabled=ro;});
+    $('#thDbLog').value=th.CFG_DB_LOG_INTERVAL!=null?th.CFG_DB_LOG_INTERVAL:600;
+    ['thWarn','thHigh','thCrit','thOff','thBat','thRise','thLog','thDbLog'].forEach(function(id){$('#'+id).disabled=ro;});
     // users
+    loadSecEvents();
     var users=await api('/users');var tu=$('#adminUsers');tu.innerHTML='';
     var GLOBAL_ROLES=['super_admin','railway_hq'];
     users.forEach(function(u){
       var isGlobal=GLOBAL_ROLES.indexOf(u.role)>=0;
       var emuCell=isGlobal?'ALL (auto)':((u.emus||[]).join(', ')||'—');
       var coachCell=isGlobal?'ALL (auto)':((u.coaches||[]).join(', ')||'—');
-      var tr=el('tr');[u.username,ROLE_LABELS[u.role]||u.role,u.email||'—',u.phone||'—',emuCell,coachCell].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var tr=el('tr');
+      [u.username,ROLE_LABELS[u.role]||u.role].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var stc=el('td');
+      if(u.disabled)stc.appendChild(el('span','badge bad','Disabled'));
+      else if(u.locked_min>0)stc.appendChild(el('span','badge warn','Locked '+u.locked_min+' min'));
+      else stc.appendChild(el('span','badge ok','Active'));
+      if(u.must_change)stc.appendChild(el('span','badge warn','Must change password'));
+      tr.appendChild(stc);
+      var tc=el('td');tc.appendChild(el('span','badge '+(u.totp_enabled?'ok':'warn'),u.totp_enabled?'ON':'OFF'));tr.appendChild(tc);
+      tr.appendChild(el('td',null,u.last_login?fmtIST(u.last_login):'never'));
+      [u.email||'—',u.phone||'—',emuCell,coachCell].forEach(function(v){tr.appendChild(el('td',null,v));});
       var ac=el('td');
       if(!ro){
         if(!isGlobal)ac.appendChild(mkBtn('Assets',function(){assignAssets(u);}));
         ac.appendChild(mkBtn('Edit',function(){editUser(u);}));
+        var isSelf=u.username===USER.username;
+        // Reset password / Sign out / Reset 2-step all end the CURRENT session too when used on your own
+        // account (the server revokes every session for that user, including the one making the call).
+        // Use the person icon -> "Change password" / "Turn on 2-step" / "Sign out" for your own account instead.
+        if(!isSelf)ac.appendChild(mkBtn('Reset password',function(){resetUserPassword(u);}));
+        if(u.locked_min>0)ac.appendChild(mkBtn('Unlock',function(){userAction(u,'unlock');}));
+        if(!isSelf)ac.appendChild(mkBtn(u.disabled?'Enable':'Disable',function(){userAction(u,u.disabled?'enable':'disable',u.disabled?null:'Disable '+u.username+'? They are signed out at once and cannot sign in.');}));
+        if(!isSelf)ac.appendChild(mkBtn('Sign out',function(){userAction(u,'logout','Sign '+u.username+' out on every device?');}));
+        if(u.totp_enabled&&!isSelf)ac.appendChild(mkBtn('Reset 2-step',function(){userAction(u,'2fa-reset','Remove two-step verification for '+u.username+'? They must set it up again.');}));
         ac.appendChild(mkBtn('Delete',function(){delUser(u);}));
       } else ac.textContent='—';
       tr.appendChild(ac);tu.appendChild(tr);
@@ -1328,7 +1549,16 @@
     var reg=await api('/sensor-registry');var ts=$('#adminSensors');ts.innerHTML='';
     $('#sensorEmpty').style.display=reg.length?'none':'block';
     reg.forEach(function(s){
-      var tr=el('tr');[s.sensor_id,s.coach_id||'—',s.serial_no||'—',s.calibration_date||'—',s.firmware||'—',s.warranty||'—'].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var tr=el('tr');
+      [s.sensor_id,s.coach_id||'—',s.serial_no||'—'].forEach(function(v){tr.appendChild(el('td',null,v));});
+      var calCell=el('td',null,s.calibration_date||'—');
+      if(s.calibration_overdue){calCell.appendChild(document.createTextNode(' '));var b=el('span','badge bad','Overdue '+s.calibration_days_overdue+'d');calCell.appendChild(b);}
+      tr.appendChild(calCell);
+      tr.appendChild(el('td',null,s.firmware||'—'));
+      var wtyCell=el('td',null,s.warranty||'—');
+      if(s.warranty_expired){wtyCell.appendChild(document.createTextNode(' '));wtyCell.appendChild(el('span','badge bad','Expired'));}
+      else if(s.warranty_expiring){wtyCell.appendChild(document.createTextNode(' '));wtyCell.appendChild(el('span','badge warn',s.warranty_days_left+'d left'));}
+      tr.appendChild(wtyCell);
       var ac=el('td');if(!ro)ac.appendChild(mkBtn('Edit',function(){editSensor(s);}));else ac.textContent='—';
       tr.appendChild(ac);ts.appendChild(tr);
     });
@@ -1337,7 +1567,7 @@
     $('#depotEmpty').style.display=depots.length?'none':'block';
     depots.forEach(function(dp){
       var tr=el('tr');[dp.depot_id,dp.name,dp.region||'—',dp.lat==null?'—':dp.lat,dp.lng==null?'—':dp.lng,dp.emu_count,dp.coach_count].forEach(function(v){tr.appendChild(el('td',null,v));});
-      var ac=el('td');if(!ro){ac.appendChild(mkBtn('Edit',function(){editDepot(dp);}));ac.appendChild(mkBtn('Delete',function(){if(confirm('Delete depot '+dp.depot_id+'?'))adminCall('/depots/'+dp.depot_id,'DELETE');}));}else ac.textContent='—';
+      var ac=el('td');if(!ro){ac.appendChild(mkBtn('Edit',function(){editDepot(dp);}));ac.appendChild(mkBtn('Escalation',function(){editDepotEscalation(dp);}));ac.appendChild(mkBtn('Delete',function(){if(confirm('Delete depot '+dp.depot_id+'?'))adminCall('/depots/'+dp.depot_id,'DELETE');}));}else ac.textContent='—';
       tr.appendChild(ac);td.appendChild(tr);
     });
     renderSysStatus();
@@ -1359,7 +1589,7 @@
     var coach=prompt('Assign to Coach id (e.g. MC-01):',dv?(dv.coach_id||''):'');if(coach===null)return;
     var emu=prompt('EMU id (e.g. EMU-01):',dv?(dv.emu_id||''):'');
     var tags=prompt('Modbus tags for TM1,TM2,TM3,TM4 (comma separated):',dv?[dv.tag1,dv.tag2,dv.tag3,dv.tag4].join(','):'1.3,1.4,1.5,1.6');
-    var iv=prompt('Per-device interval OVERRIDE in seconds — leave blank to use the global\n"Log interval (s)" from Admin → Thresholds (recommended):',dv?(dv.post_interval_override||''):'');
+    var iv=prompt('Per-device interval OVERRIDE in seconds — leave blank to use the global\n"Device push interval (s)" from Admin → Thresholds (recommended):',dv?(dv.post_interval_override||''):'');
     var en=confirm('Enabled? OK = enabled, Cancel = disabled');
     var t=(tags||'1.3,1.4,1.5,1.6').split(',').map(function(x){return x.trim();});
     adminCall('/devices-registry'+(dv?'/'+dv.device_id:''),dv?'PUT':'POST',{device_id:id,coach_id:coach,emu_id:emu,tag1:t[0],tag2:t[1],tag3:t[2],tag4:t[3],post_interval_override:iv?+iv:null,enabled:en});
@@ -1384,6 +1614,41 @@
     var lat=prompt('Latitude (optional, for map):',dp?(dp.lat||''):'');
     var lng=prompt('Longitude (optional, for map):',dp?(dp.lng||''):'');
     adminCall('/depots'+(dp?'/'+dp.depot_id:''),dp?'PUT':'POST',{depot_id:id,name:name,region:region,lat:lat,lng:lng});
+  }
+  async function editDepotEscalation(dp){
+    var cur;try{cur=await api('/depots/'+dp.depot_id+'/escalation');}catch(e){alert(e.message);return;}
+    if(!cur.using_fleet_default){
+      var goEdit=confirm('Depot '+dp.depot_id+' HAS its own custom escalation policy (separate from the fleet-wide one).\n\nOK = add/change a severity in it\nCancel = choose to remove it and go back to the fleet-wide default');
+      if(!goEdit){
+        if(confirm('Remove '+dp.depot_id+'\'s custom escalation policy? It will go back to using the SAME fleet-wide policy as every other depot.'))
+          api('/depots/'+dp.depot_id+'/escalation',{method:'DELETE'}).then(function(){alert('Reverted to fleet default for '+dp.depot_id+'.');}).catch(function(e){alert(e.message);});
+        return;
+      }
+    } else {
+      if(!confirm('Depot '+dp.depot_id+' currently uses the SAME fleet-wide escalation policy as every other depot.\n\nSet up its OWN separate escalation policy instead (different timing / different people from other depots)?'))return;
+    }
+    var sev=prompt('Which severity to set for '+dp.depot_id+' only? critical / high / warning / rapid_rise / low_battery\n(Offline is not configurable here — it is always email-only, fleet-wide, see Notify tab.)','critical');
+    if(!sev)return;sev=sev.trim();
+    if(['critical','high','warning','rapid_rise','low_battery'].indexOf(sev)<0){alert('Unknown severity: '+sev);return;}
+    var curRule=(cur.rules&&cur.rules[sev])||{escalation:[]};
+    if(!confirm('Set the L1→L2→L3→L4 escalation chain for '+sev+' on '+dp.depot_id+'\'s own coaches? Each level has its own time (in minutes since the alert was raised); leave a level blank to skip it.'))return;
+    var chain=promptChain(sev+' ('+dp.depot_id+' only)',curRule);if(chain===null)return;
+    var patch={rules:{}};patch.rules[sev]={escalation:chain};
+    if(chain.length){
+      patch.escalation_tiers={};
+      for(var i=0;i<chain.length;i++){
+        var tierKey=chain[i].tier;
+        var curTier=(cur.escalation_tiers&&cur.escalation_tiers[tierKey])||{};
+        var name=prompt('Name for tier '+tierKey+' at '+dp.depot_id+':',curTier.name||tierKey);if(name===null)return;
+        var role=prompt('Tier '+tierKey+' at '+dp.depot_id+': escalate to staff holding which role, ASSIGNED to a coach in this depot? super_admin / railway_hq / depot_admin / maintenance_eng / observer',curTier.role||'');
+        if(role===null)return;role=role.trim();
+        if(role&&['super_admin','railway_hq','depot_admin','maintenance_eng','observer'].indexOf(role)<0){alert('Role must be one of: super_admin, railway_hq, depot_admin, maintenance_eng, observer (or leave blank).');return;}
+        var emails=prompt('Tier '+tierKey+': fixed emails for this depot (comma separated, usually blank):',csv(curTier.emails));if(emails===null)return;
+        var phones=prompt('Tier '+tierKey+': fixed phones for this depot (comma separated, usually blank):',csv(curTier.phones));if(phones===null)return;
+        patch.escalation_tiers[tierKey]={name:name,role:role||null,emails:arr(emails),phones:arr(phones)};
+      }
+    }
+    api('/depots/'+dp.depot_id+'/escalation',{method:'PUT',body:JSON.stringify(patch)}).then(function(){alert('Saved: '+dp.depot_id+' now has its own escalation chain for '+sev+' ('+chainStr({escalation:chain})+').');}).catch(function(e){alert(e.message);});
   }
   async function doRestore(ev){
     var file=ev.target.files&&ev.target.files[0];if(!file)return;
@@ -1414,20 +1679,154 @@
   }
   function mkBtn(label,fn){var b=el('button','mini',label);b.style.marginRight='6px';b.addEventListener('click',fn);return b;}
   async function adminCall(path,method,body){
-    try{await api(path,{method:method,body:body?JSON.stringify(body):undefined});renderAdmin();}
+    try{
+      var r=await api(path,{method:method,body:body?JSON.stringify(body):undefined});renderAdmin();
+      if(r&&r.orphan_devices&&r.orphan_devices.length)alert('Coach deleted.\n\nField device(s) still registered to it: '+r.orphan_devices.join(', ')+'\n\nDelete them in Admin → Field Devices too, otherwise the coach will re-appear as soon as that device sends data.');
+    }
     catch(e){alert(e.message);}
   }
 
   async function saveThresholds(){
     var body={CFG_WARN_TEMP:+$('#thWarn').value,CFG_HIGH_TEMP:+$('#thHigh').value,CFG_CRIT_TEMP:+$('#thCrit').value,
-      CFG_OFFLINE_SECONDS:+$('#thOff').value,CFG_LOW_BATTERY:+$('#thBat').value,CFG_RISE_RATE:+$('#thRise').value,
-      CFG_LOG_INTERVAL:Math.max(5,+$('#thLog').value||20)};
+      CFG_OFFLINE_SECONDS:+$('#thOff').value,CFG_OFFLINE_ALERT_SECONDS:+$('#thOffAlert').value,CFG_LOW_BATTERY:+$('#thBat').value,CFG_RISE_RATE:+$('#thRise').value,
+      CFG_LOG_INTERVAL:Math.max(5,+$('#thLog').value||20),
+      CFG_DB_LOG_INTERVAL:Math.max(0,+$('#thDbLog').value||0)};
     try{await api('/thresholds',{method:'PUT',body:JSON.stringify(body)});THRESH_CACHE=null;$('#thSave').textContent='Saved ✓';setTimeout(function(){$('#thSave').textContent='Save thresholds';},1500);}
     catch(e){alert(e.message);}
   }
+  // ===================== Account security screens =====================
+  var MODAL_FORCED=false;
+  function openModal(title,build,opts){
+    opts=opts||{};MODAL_FORCED=!!opts.forced;$('#secTitle').textContent=title;
+    var body=$('#secBody');body.innerHTML='';build(body);$('#secModal').style.display='grid';
+    var f=body.querySelector('input');if(f)setTimeout(function(){try{f.focus();}catch(e){}},50);
+  }
+  function closeModal(){$('#secModal').style.display='none';$('#secBody').innerHTML='';MODAL_FORCED=false;}
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&$('#secModal').style.display==='grid'&&!MODAL_FORCED)closeModal();});
+  function fieldRow(label,type,ac){var d=el('div','field');d.appendChild(el('label',null,label));var i=el('input');i.type=type||'text';if(ac)i.autocomplete=ac;i.spellcheck=false;d.appendChild(i);return{wrap:d,input:i};}
+  function btnRow(){return el('div','row2');}
+  function fmtIST(iso){return iso?new Date(iso).toLocaleString('en-GB',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})+' IST':'—';}
+
+  function openPasswordModal(o){
+    o=o||{};
+    openModal(o.forced?'Set a new password':'Change password',function(body){
+      body.appendChild(el('div','sub',o.forced?'For your security you must choose your own password before you can use the dashboard.':'Changing the password signs you out on every other device.'));
+      var cur=fieldRow('Current password','password','current-password'),n1=fieldRow('New password','password','new-password'),n2=fieldRow('Repeat new password','password','new-password');
+      [cur,n1,n2].forEach(function(f){body.appendChild(f.wrap);});
+      var ul=el('ul','rules');['At least 10 characters.','Use 3 of: small letters, CAPITAL letters, digits, symbols (or a passphrase of 16+ characters).','Do not use your username, "password", "admin", "himnish", or 1234 / abcd.'].forEach(function(t){ul.appendChild(el('li',null,t));});
+      body.appendChild(ul);
+      var err=el('div','err'),row=btnRow(),save=el('button','btn','Save password');row.appendChild(save);
+      if(!o.forced){var c=el('button','mini','Cancel');c.onclick=closeModal;row.appendChild(c);}
+      body.appendChild(row);body.appendChild(err);
+      function go(){
+        err.textContent='';
+        if(n1.input.value!==n2.input.value){err.textContent='The two new passwords are not the same.';return;}
+        save.disabled=true;
+        api('/me/password',{method:'POST',body:JSON.stringify({current:cur.input.value,next:n1.input.value})}).then(function(r){
+          TOKEN=r.token;USER=r.user;closeModal();
+          if(o.onDone)o.onDone();else alert('Password changed. Every other device was signed out.');
+        }).catch(function(e){err.textContent=e.message;}).then(function(){save.disabled=false;});
+      }
+      save.onclick=go;n2.input.addEventListener('keydown',function(e){if(e.key==='Enter')go();});
+    },{forced:o.forced});
+  }
+
+  async function openAccount(){
+    var me;try{me=await api('/me');}catch(e){alert(e.message);return;}
+    openModal('My account',function(body){
+      var kv=el('div','sec-kv');
+      [['User',me.username],['Role',ROLE_LABELS[me.role]||me.role],['Previous sign-in',USER&&USER.last_login?fmtIST(USER.last_login)+(USER.last_login_ip?' · '+USER.last_login_ip:''):'this is your first sign-in'],['Password changed',fmtIST(me.pw_changed_at)]].forEach(function(r){kv.appendChild(el('b',null,r[0]));kv.appendChild(el('span',null,r[1]));});
+      body.appendChild(kv);
+      var t=el('div');t.style.margin='4px 0 6px';t.appendChild(el('b',null,'Two-step verification  '));
+      var bd=el('span','badge '+(me.totp_enabled?'ok':'warn'),me.totp_enabled?'ON':'OFF');t.appendChild(bd);body.appendChild(t);
+      body.appendChild(el('div','sub',me.totp_enabled?('Sign-in also needs a code from your authenticator app. Recovery codes left: '+me.recovery_codes_left+'.'):'Adds a 6-digit code from your phone on top of the password. Strongly recommended for every admin.'));
+      var row=btnRow();
+      var bp=el('button','btn','Change password');bp.onclick=function(){openPasswordModal({});};row.appendChild(bp);
+      var b2=el('button','mini',me.totp_enabled?'Turn off 2-step':'Turn on 2-step');b2.onclick=function(){if(me.totp_enabled)open2faDisable();else open2faSetup({});};row.appendChild(b2);
+      body.appendChild(row);
+      var row2=btnRow();
+      var bo=el('button','mini','Sign out on all devices');bo.onclick=function(){if(!confirm('Sign out everywhere, including this device?'))return;api('/me/logout-all',{method:'POST'}).then(function(){doLogout();}).catch(function(e){alert(e.message);});};row2.appendChild(bo);
+      var bc=el('button','mini','Close');bc.onclick=closeModal;row2.appendChild(bc);body.appendChild(row2);
+    });
+  }
+
+  async function open2faSetup(o){
+    o=o||{};var st;
+    try{st=await api('/me/2fa/setup',{method:'POST'});}catch(e){alert(e.message);return;}
+    openModal('Turn on two-step verification',function(body){
+      var ol=el('ol','rules');ol.style.marginLeft='20px';
+      ['Install "Google Authenticator" or "Microsoft Authenticator" on your phone.','In the app choose "Add account" -> "Enter a setup key" and type the key below (name: '+st.account+', type: time-based).','Type the 6-digit code the app shows.'].forEach(function(t){ol.appendChild(el('li',null,t));});
+      body.appendChild(ol);
+      body.appendChild(el('div','secret',st.secret.match(/.{1,4}/g).join(' ')));
+      var a=el('a',null,'On this phone? Tap here to add it automatically');a.href=st.otpauth_uri;a.style.cssText='display:block;text-align:center;font-size:12.5px;margin-bottom:8px';body.appendChild(a);
+      var code=fieldRow('6-digit code','text','one-time-code');code.input.inputMode='numeric';code.input.maxLength=7;body.appendChild(code.wrap);
+      var err=el('div','err'),row=btnRow(),go=el('button','btn','Turn on');row.appendChild(go);
+      if(!o.forced){var c=el('button','mini','Cancel');c.onclick=closeModal;row.appendChild(c);}
+      body.appendChild(row);body.appendChild(err);
+      function run(){
+        err.textContent='';go.disabled=true;
+        api('/me/2fa/enable',{method:'POST',body:JSON.stringify({code:code.input.value})}).then(function(r){
+          TOKEN=r.token;USER=r.user;showRecoveryCodes(r.recovery_codes,o);
+        }).catch(function(e){err.textContent=e.message;}).then(function(){go.disabled=false;});
+      }
+      go.onclick=run;code.input.addEventListener('keydown',function(e){if(e.key==='Enter')run();});
+    },{forced:o.forced});
+  }
+  function showRecoveryCodes(codes,o){
+    openModal('Save your recovery codes',function(body){
+      body.appendChild(el('div','sub','If you lose your phone, each of these 8 codes can be typed instead of the 6-digit code, ONE time. Write them down or print them and keep them safe. They are not shown again.'));
+      var pre=el('pre','codes',codes.join('\n'));body.appendChild(pre);
+      var row=btnRow(),ok=el('button','btn','I have saved them');ok.onclick=function(){closeModal();if(o&&o.onDone)o.onDone();};row.appendChild(ok);body.appendChild(row);
+    },{forced:true});
+  }
+  function open2faDisable(){
+    openModal('Turn off two-step verification',function(body){
+      body.appendChild(el('div','sub','Your password and a current 6-digit code are needed.'));
+      var pw=fieldRow('Password','password','current-password'),code=fieldRow('6-digit code','text','one-time-code');code.input.inputMode='numeric';code.input.maxLength=7;
+      body.appendChild(pw.wrap);body.appendChild(code.wrap);
+      var err=el('div','err'),row=btnRow(),go=el('button','btn','Turn off'),c=el('button','mini','Cancel');c.onclick=closeModal;row.appendChild(go);row.appendChild(c);body.appendChild(row);body.appendChild(err);
+      go.onclick=function(){err.textContent='';go.disabled=true;
+        api('/me/2fa/disable',{method:'POST',body:JSON.stringify({password:pw.input.value,code:code.input.value})}).then(function(r){TOKEN=r.token;USER=r.user;closeModal();alert('Two-step verification is off.');}).catch(function(e){err.textContent=e.message;}).then(function(){go.disabled=false;});};
+    });
+  }
+  $('#acctBtn').addEventListener('click',openAccount);
+
+  function userAction(u,action,confirmText){
+    if(confirmText&&!confirm(confirmText))return;
+    api('/users/'+encodeURIComponent(u.username)+'/'+action,{method:'POST'}).then(function(){renderAdmin();}).catch(function(e){alert(e.message);});
+  }
+  function resetUserPassword(u){
+    if(!confirm('Reset the password of '+u.username+'? A temporary password is created, they are signed out everywhere, and must choose a new password at the next sign-in.'))return;
+    api('/users/'+encodeURIComponent(u.username)+'/reset-password',{method:'POST'}).then(function(r){
+      renderAdmin();
+      openModal('Temporary password for '+u.username,function(body){
+        body.appendChild(el('div','sub','Give this to '+u.username+' privately (phone / in person, not by group chat). It is shown only ONCE. At the first sign-in they must choose their own password.'));
+        body.appendChild(el('div','secret',r.temp_password));
+        var row=btnRow(),ok=el('button','btn','Done');ok.onclick=closeModal;row.appendChild(ok);body.appendChild(row);
+      });
+    }).catch(function(e){alert(e.message);});
+  }
+  var SEC_LABEL={login:'Signed in',login_failed:'Wrong password / code',account_locked:'Account LOCKED',account_unlocked:'Unlocked',logout:'Signed out',logout_all:'Signed out everywhere',forced_logout:'Forced sign-out',password_changed:'Password changed',password_reset:'Password reset',account_disabled:'Disabled',account_enabled:'Enabled','2fa_enabled':'2-step ON','2fa_disabled':'2-step OFF','2fa_reset':'2-step reset',recovery_code_used:'Recovery code used',login_refused:'Sign-in refused'};
+  async function loadSecEvents(){
+    var panel=$('#secPanel');
+    if(!USER||USER.role!=='super_admin'){panel.style.display='none';return;}
+    panel.style.display='';
+    var ev=[];try{ev=await api('/security/events?limit=100');}catch(e){return;}
+    var tb=$('#secEvents');tb.innerHTML='';
+    if(!ev.length){var tr0=el('tr');var td0=el('td',null,'No events yet.');td0.colSpan=5;tr0.appendChild(td0);tb.appendChild(tr0);return;}
+    ev.forEach(function(e){
+      var tr=el('tr');tr.appendChild(el('td',null,fmtIST(e.at)));
+      var bad=/failed|locked|refused/.test(e.type),warn=/reset|disabled|forced|recovery/.test(e.type);
+      var tdt=el('td');tdt.appendChild(el('span','badge '+(bad?'bad':(warn?'warn':'ok')),SEC_LABEL[e.type]||e.type));tr.appendChild(tdt);
+      [e.user||'—',e.ip||'—',e.detail||''].forEach(function(v){tr.appendChild(el('td',null,v));});
+      tb.appendChild(tr);
+    });
+  }
+  $('#secRefresh').addEventListener('click',loadSecEvents);
+
   function addUser(){
     var username=prompt('New username:');if(!username)return;
-    var password=prompt('Password for '+username+' (min 8 chars):');if(!password)return;
+    var password=prompt('Temporary password for '+username+'\n(min 10 characters, 3 of: a-z A-Z 0-9 symbol). The user must change it at the first sign-in:');if(!password)return;
     var role=prompt('Role: super_admin / railway_hq / depot_admin / maintenance_eng / observer','maintenance_eng');if(!role)return;
     var depot=prompt('Depot id (optional):','');
     var email=prompt('Email (for reports & alerts):','');
@@ -1439,7 +1838,7 @@
     var depot=prompt('Depot id (blank for none):',u.depot_id||'');
     var email=prompt('Email (for reports & alerts):',u.email||'');
     var phone=prompt('Mobile (for SMS alerts):',u.phone||'');
-    var pw=prompt('New password (blank = keep current):','');
+    var pw=prompt('Set a NEW temporary password? (blank = keep current). Tip: use the "Reset password" button instead, it makes a strong one for you.','');
     var body={role:role,depot_id:depot,email:email,phone:phone};if(pw)body.password=pw;
     adminCall('/users/'+encodeURIComponent(u.username),'PUT',body);
   }
@@ -1497,6 +1896,7 @@
 
   // ---- Notifications ----
   var SEVERITIES=['warning','high','critical','rapid_rise','offline','low_battery'];
+  var TIERS=['L1','L2','L3','L4'];
   function csv(a){return (a||[]).join(', ');}
   function arr(s){return (s||'').split(',').map(function(x){return x.trim();}).filter(Boolean);}
   async function renderNotify(){
@@ -1515,11 +1915,11 @@
       var row=el('tr');
       row.appendChild(el('td',null,sev.replace('_',' ')));
       row.appendChild(el('td',null,(r.channels||[]).indexOf('email')>=0?'✓':'—'));
-      row.appendChild(el('td',null,(r.channels||[]).indexOf('sms')>=0?'✓':'—'));
+      var smsCell=el('td',null,(r.channels||[]).indexOf('sms')>=0?'✓':'—');
+      row.appendChild(smsCell);
       row.appendChild(el('td',null,csv(r.emails)||'—'));
       row.appendChild(el('td',null,csv(r.phones)||'—'));
-      row.appendChild(el('td',null,r.escalate_to||'—'));
-      row.appendChild(el('td',null,r.escalate_after_min||'0'));
+      row.appendChild(el('td',null,chainStr(r)));
       var ac=el('td');if(!ro)ac.appendChild(mkBtn('Edit',function(){editRule(sev,r);}));else ac.textContent='—';
       row.appendChild(ac);tr.appendChild(row);
     });
@@ -1527,7 +1927,9 @@
     var tt=$('#tierRows');tt.innerHTML='';
     Object.keys(cfg.escalation_tiers).forEach(function(k){
       var t=cfg.escalation_tiers[k];var row=el('tr');
-      [k,t.name||'',csv(t.emails)||'—',csv(t.phones)||'—'].forEach(function(v){row.appendChild(el('td',null,v));});
+      [k,t.name||''].forEach(function(v){row.appendChild(el('td',null,v));});
+      row.appendChild(el('td',null,t.role?(ROLE_LABELS[t.role]||t.role):'— (fixed list only)'));
+      [csv(t.emails)||'—',csv(t.phones)||'—'].forEach(function(v){row.appendChild(el('td',null,v));});
       var ac=el('td');if(!ro)ac.appendChild(mkBtn('Edit',function(){editTier(k,t);}));else ac.textContent='—';
       row.appendChild(ac);tt.appendChild(row);
     });
@@ -1552,22 +1954,54 @@
       lb.appendChild(row);
     });
   }
+  function chainStr(r){
+    var chain=escalationChain(r);
+    if(!chain.length)return '— (no escalation)';
+    return chain.map(function(s){return s.tier+'@'+s.after_min+'m';}).join(' → ');
+  }
+  function escalationChain(r){
+    if(Array.isArray(r.escalation))return r.escalation.filter(function(s){return s&&s.tier&&s.after_min;});
+    if(r.escalate_to&&r.escalate_after_min)return [{tier:r.escalate_to,after_min:r.escalate_after_min}];
+    return [];
+  }
+  function promptChain(sev,r){
+    var byTier={};escalationChain(r).forEach(function(s){byTier[s.tier]=s.after_min;});
+    var chain=[];
+    for(var i=0;i<TIERS.length;i++){
+      var tk=TIERS[i];
+      var v=prompt('Escalate '+sev+' alerts to '+tk+' after how many minutes?\n(blank or 0 = skip this level — the chain does not have to use all 4)',byTier[tk]||'');
+      if(v===null)return null;
+      v=(v||'').trim();
+      if(v&&+v>0)chain.push({tier:tk,after_min:+v});
+    }
+    return chain;
+  }
   function editRule(sev,r){
     var email=confirm('Send EMAIL for '+sev+' alerts? OK=yes Cancel=no');
-    var sms=confirm('Send SMS for '+sev+' alerts? OK=yes Cancel=no');
+    var sms;
+    if(sev==='offline')sms=confirm('Send SMS for offline alerts (after the "Offline alert delay" in Thresholds confirms it is a genuine, sustained outage — not a brief signal drop)? OK=yes Cancel=no\n\nEither way: hourly "still offline" reminders are EMAIL ONLY, never SMS, to control cost.');
+    else sms=confirm('Send SMS for '+sev+' alerts? OK=yes Cancel=no');
     var emails=prompt('Email recipients for '+sev+' (comma separated):',csv(r.emails));if(emails===null)return;
     var phones=prompt('Phone recipients for '+sev+' (comma separated):',csv(r.phones));if(phones===null)return;
-    var esc=prompt('Escalate to tier (L1/L2/L3/L4, blank=none):',r.escalate_to||'');
-    var after=prompt('Escalate after minutes (0=no escalation):',r.escalate_after_min||0);
-    var ch=[];if(email)ch.push('email');if(sms)ch.push('sms');
-    var patch={rules:{}};patch.rules[sev]={channels:ch,emails:arr(emails),phones:arr(phones),escalate_to:esc||'',escalate_after_min:+after||0};
-    adminCallNotify(patch);
+    if(!confirm('Set up the escalation chain for '+sev+' next? (L1 → L2 → L3 → L4, each with its own time — skip any level by leaving it blank)\n\nOK = yes\nCancel = keep the escalation chain as it is'))return doSaveRule();
+    var chain=promptChain(sev,r);if(chain===null)return;
+    return doSaveRule(chain);
+    function doSaveRule(newChain){
+      var ch=[];if(email)ch.push('email');if(sms)ch.push('sms');
+      var patch={rules:{}};patch.rules[sev]={channels:ch,emails:arr(emails),phones:arr(phones)};
+      if(newChain)patch.rules[sev].escalation=newChain;
+      adminCallNotify(patch);
+    }
   }
   function editTier(k,t){
     var name=prompt('Name for tier '+k+':',t.name||'');if(name===null)return;
-    var emails=prompt('Tier '+k+' emails (comma separated):',csv(t.emails));if(emails===null)return;
-    var phones=prompt('Tier '+k+' phones (comma separated):',csv(t.phones));if(phones===null)return;
-    var patch={escalation_tiers:{}};patch.escalation_tiers[k]={name:name,emails:arr(emails),phones:arr(phones)};
+    var role=prompt('Scope this tier to a role (recommended): super_admin / railway_hq / depot_admin / maintenance_eng / observer\n\nOnly staff ASSIGNED to the alert\'s own coach/EMU with this role are escalated to — not the whole fleet. Leave blank to use ONLY the fixed list below for every coach.',t.role||'');
+    if(role===null)return;
+    role=role.trim();
+    if(role&&['super_admin','railway_hq','depot_admin','maintenance_eng','observer'].indexOf(role)<0){alert('Role must be one of: super_admin, railway_hq, depot_admin, maintenance_eng, observer (or leave blank).');return;}
+    var emails=prompt('Fixed emails for tier '+k+' — notified for EVERY coach\'s escalation at this level, in ADDITION to the role-scoped staff above (comma separated, usually leave blank):',csv(t.emails));if(emails===null)return;
+    var phones=prompt('Fixed phones for tier '+k+' (comma separated, usually leave blank):',csv(t.phones));if(phones===null)return;
+    var patch={escalation_tiers:{}};patch.escalation_tiers[k]={name:name,role:role||null,emails:arr(emails),phones:arr(phones)};
     adminCallNotify(patch);
   }
   async function adminCallNotify(patch){try{await api('/alert-config',{method:'PUT',body:JSON.stringify(patch)});renderNotify();}catch(e){alert(e.message);}}
@@ -1604,7 +2038,10 @@
     REPORT_TYPES.forEach(function(rt){
       var tr=el('tr');tr.appendChild(el('td',null,rt[1]));
       var e=el('td');var xb=el('button','mini','⬇ Excel');xb.addEventListener('click',function(){download('/report/'+rt[0]+'/xlsx','raip_'+rt[0]+'.xlsx').catch(function(err){alert(err.message);});});e.appendChild(xb);tr.appendChild(e);
-      var p=el('td');var pb=el('button','mini','🖨 PDF');pb.addEventListener('click',function(){printReport(rt[0]);});p.appendChild(pb);tr.appendChild(p);
+      var p=el('td');
+      var db=el('button','mini','⬇ PDF');db.style.marginRight='6px';db.addEventListener('click',function(){download('/report/'+rt[0]+'/pdf','raip_'+rt[0]+'.pdf').catch(function(err){alert(err.message);});});p.appendChild(db);
+      var pb=el('button','mini','🖨 Print');pb.addEventListener('click',function(){printReport(rt[0]);});p.appendChild(pb);
+      tr.appendChild(p);
       tb.appendChild(tr);
     });
     // historical report coach dropdown (from all coaches in scope)
@@ -1663,7 +2100,7 @@
       var online=tms.filter(function(t){return t.status!=='offline';});
       function list(rows,cols){ if(!rows.length)return '<div class="desc">None found. 👍</div>';
         var h='<table style="width:100%"><thead><tr>'+cols.map(function(c){return '<th>'+c[0]+'</th>';}).join('')+'</tr></thead><tbody>';
-        h+=rows.map(function(r){return '<tr>'+cols.map(function(c){return '<td>'+(r[c[1]]==null?'—':r[c[1]])+'</td>';}).join('')+'</tr>';}).join('');
+        h+=rows.map(function(r){return '<tr>'+cols.map(function(c){return '<td>'+(r[c[1]]==null?'—':esc(r[c[1]]))+'</td>';}).join('')+'</tr>';}).join('');
         return h+'</tbody></table>'; }
       var ans='';
       if(!q||q==='help'){
@@ -1705,7 +2142,7 @@
         ans='<div class="desc">Didn\'t catch that. Try: <b>critical</b>, <b>offline</b>, <b>hottest</b>, <b>battery</b>, <b>alerts</b>, <b>summary</b> — or type <b>help</b>.</div>';
       }
       out.innerHTML=ans;
-    }catch(e){out.innerHTML='<div class="desc">Error: '+e.message+'</div>';}
+    }catch(e){out.innerHTML='<div class="desc">Error: '+esc(e.message)+'</div>';}
   }
 
   async function renderHealth(){
@@ -1730,7 +2167,21 @@
       sp.style.background='var(--'+(e.score>=80?'ok':e.score>=55?'high':'crit')+'-bg)';sp.style.color='var(--'+(e.score>=80?'ok':e.score>=55?'high':'crit')+')';sc.appendChild(sp);tr.appendChild(sc);
       te.appendChild(tr);
     });
+    var rel=await api('/reliability');var tr2=$('#reliabilityRows');tr2.innerHTML='';
+    if(!rel.coaches.length){var e0=el('tr');var d0=el('td','desc','No alert history yet.');d0.colSpan=7;e0.appendChild(d0);tr2.appendChild(e0);}
+    rel.coaches.forEach(function(c){
+      var row=el('tr');
+      row.appendChild(el('td',null,c.coach_id));
+      row.appendChild(el('td',null,String(c.failures)));
+      row.appendChild(el('td',null,c.mtbf_hours==null?'—':fmtHours(c.mtbf_hours)));
+      row.appendChild(el('td',null,c.mttr_hours==null?'—':fmtHours(c.mttr_hours)));
+      row.appendChild(el('td',null,String(c.resolved_count)));
+      var so=el('td',null,String(c.still_open));if(c.still_open>0)so.style.color='var(--crit)';row.appendChild(so);
+      row.appendChild(el('td',null,c.last_failure_at?new Date(c.last_failure_at).toLocaleString('en-GB'):'—'));
+      tr2.appendChild(row);
+    });
   }
+  function fmtHours(h){if(h<1)return Math.round(h*60)+' min';if(h<48)return h.toFixed(1)+' h';return (h/24).toFixed(1)+' d';}
 
   async function renderAudit(){
     var a=await api('/audit');var tb=$('#auditRows');tb.innerHTML='';
