@@ -351,6 +351,24 @@ function apiRouter(store, notifier) {
     catch (e) { res.status(400).json({ error: e.message }); }
   });
 
+  // ---- SMTP (outgoing e-mail) settings — Super Admin only ---------------
+  // Lets a Super Admin rotate the mail host/user/password from the Admin
+  // tab instead of SSH-ing into the server to edit .env. Password is never
+  // returned - GET only reports whether one is set (has_password). Taking
+  // effect is immediate (no restart): notify.js re-reads this on every send.
+  router.get('/settings/smtp', admin, (req, res) => res.json(store.getSmtpSettings()));
+  router.put('/settings/smtp', admin, (req, res) => {
+    try { res.json(store.setSmtpSettings(req.body || {}, req.user.sub)); }
+    catch (e) { res.status(400).json({ error: e.message }); }
+  });
+  router.post('/settings/smtp/clear', admin, (req, res) => res.json(store.clearSmtpSettings(req.user.sub)));
+  router.post('/settings/smtp/test', admin, async (req, res) => {
+    const to = (req.body || {}).to;
+    if (!to) return res.status(400).json({ error: 'to required' });
+    try { res.json(await notifier.sendTest('email', to, store)); }
+    catch (e) { res.status(400).json({ error: e.message }); }
+  });
+
   // ---- Health Index (scoped) --------------------------------------------
   router.get('/health-index', (req, res) => {
     const sensors = scopedSensors(req.user);

@@ -506,6 +506,24 @@
         </div>
       </div>
 
+      <div class="view-head"><h2 style="font-size:14px">Email (SMTP) Settings</h2><span class="desc" id="smtpSourceNote">Super Admin only · change the outgoing e-mail account from here — no SSH / server access needed. Takes effect immediately.</span></div>
+      <div class="panel" style="padding:16px;margin-bottom:18px" id="smtpPanel">
+        <div class="row" id="smtpRow">
+          <div class="f"><label>SMTP Host</label><input class="inp" id="smtpHost" placeholder="smtpout.secureserver.net" style="width:220px"></div>
+          <div class="f"><label>Port</label><input class="inp" id="smtpPort" type="number" style="width:90px"></div>
+          <div class="f"><label>Username (e-mail)</label><input class="inp" id="smtpUser" placeholder="alerts@himnishindia.com" style="width:220px"></div>
+          <div class="f"><label>Password</label><input class="inp" id="smtpPass" type="password" placeholder="leave blank to keep current" style="width:220px"></div>
+          <div class="f"><label>From (optional)</label><input class="inp" id="smtpFrom" placeholder="defaults to username" style="width:220px"></div>
+        </div>
+        <div class="row" style="margin-top:10px;align-items:center">
+          <button class="btn ghost" id="smtpSave">Save</button>
+          <button class="mini" id="smtpRevert" style="margin-left:8px">Revert to server .env</button>
+          <input class="inp" id="smtpTestTo" placeholder="send test email to..." style="width:220px;margin-left:16px">
+          <button class="mini" id="smtpTestBtn" style="margin-left:6px">Send test</button>
+          <span class="desc" id="smtpNote" style="margin-left:12px"></span>
+        </div>
+      </div>
+
       <div class="view-head"><h2 style="font-size:14px">Users &amp; Roles</h2><button class="mini" id="addUserBtn" style="margin-left:auto">+ Add user</button></div>
       <div class="panel" style="margin-bottom:18px"><table>
         <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>2-step</th><th>Last sign-in</th><th>Email</th><th>Mobile</th><th>Assigned EMUs</th><th>Assigned Coaches</th><th>Actions</th></tr></thead>
@@ -1479,13 +1497,44 @@
     $('#restoreFile').addEventListener('change',doRestore);
     $('#bulkBtn').addEventListener('click',doBulkImport);
     $('#refreshStatus').addEventListener('click',renderSysStatus);
+    $('#smtpSave').addEventListener('click',saveSmtpSettings);
+    $('#smtpRevert').addEventListener('click',revertSmtpSettings);
+    $('#smtpTestBtn').addEventListener('click',testSmtpSettings);
+  }
+  async function renderSmtpSettings(){
+    try{
+      var s=await api('/settings/smtp');
+      $('#smtpHost').value=s.host||'';$('#smtpPort').value=s.port||587;$('#smtpUser').value=s.user||'';$('#smtpFrom').value=s.from||'';
+      $('#smtpPass').value='';$('#smtpPass').placeholder=s.has_password?'•••••• saved — leave blank to keep':'not set — leave blank to stay in dry-run';
+      $('#smtpSourceNote').textContent='Source: '+(s.source==='dashboard'?'dashboard (saved here)':'server .env')+(s.updated_at?' · last changed '+new Date(s.updated_at).toLocaleString('en-GB'):'')+' · Super Admin only · takes effect immediately.';
+    }catch(e){}
+  }
+  async function saveSmtpSettings(){
+    var body={host:$('#smtpHost').value.trim(),port:+$('#smtpPort').value||587,user:$('#smtpUser').value.trim(),from:$('#smtpFrom').value.trim()};
+    var pass=$('#smtpPass').value;if(pass)body.password=pass;
+    try{await api('/settings/smtp',{method:'PUT',body:JSON.stringify(body)});$('#smtpSave').textContent='Saved ✓';setTimeout(function(){$('#smtpSave').textContent='Save';},1500);renderSmtpSettings();}
+    catch(e){alert(e.message);}
+  }
+  async function revertSmtpSettings(){
+    if(!confirm('Revert to the server .env e-mail settings? Any dashboard-saved host/user/password will be cleared.'))return;
+    try{await api('/settings/smtp/clear',{method:'POST',body:'{}'});renderSmtpSettings();}catch(e){alert(e.message);}
+  }
+  async function testSmtpSettings(){
+    var to=$('#smtpTestTo').value.trim();if(!to){alert('Enter an address to send the test to');return;}
+    $('#smtpNote').textContent='Sending...';
+    try{var r=await api('/settings/smtp/test',{method:'POST',body:JSON.stringify({to:to})});
+      $('#smtpNote').textContent=r.ok?(r.note?('Sent — '+r.note):'Sent ✓'):('Failed: '+(r.error||''));
+    }catch(e){$('#smtpNote').textContent='Failed: '+e.message;}
   }
   function isAdmin(){return USER&&USER.role==='super_admin';}
 
   async function renderAdmin(){
     var ro=!isAdmin();
     $('#adminScopeNote').textContent=ro?'Read-only view — editing requires Super Admin':'Super Admin · full master-data control';
-    ['addUserBtn','addEmuBtn','addCoachBtn','thSave','addDepotBtn','bulkBtn','addDeviceBtn'].forEach(function(id){$('#'+id).style.display=ro?'none':'';});
+    ['addUserBtn','addEmuBtn','addCoachBtn','thSave','addDepotBtn','bulkBtn','addDeviceBtn','smtpSave','smtpRevert','smtpTestBtn','smtpTestTo'].forEach(function(id){$('#'+id).style.display=ro?'none':'';});
+    ['smtpHost','smtpPort','smtpUser','smtpPass','smtpFrom'].forEach(function(id){$('#'+id).disabled=ro;});
+    if(ro){$('#smtpSourceNote').textContent='Read-only — Super Admin can change the e-mail account here.';}
+    else renderSmtpSettings();
     // thresholds
     var th=await api('/thresholds');
     $('#thWarn').value=th.CFG_WARN_TEMP;$('#thHigh').value=th.CFG_HIGH_TEMP;$('#thCrit').value=th.CFG_CRIT_TEMP;

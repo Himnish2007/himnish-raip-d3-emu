@@ -81,6 +81,7 @@ class Store {
     this._startedAt = Date.now();
     this.thresholds = config.defaultThresholds();
     this.alertConfig = defaultAlertConfig();
+    this.smtpSettings = null;      // dashboard override of SMTP creds (Super Admin), else use server .env
     // ---- in-memory (live) ----
     this.sensors = new Map();      // sensor_id -> meta + latest reading
     this.series = new Map();       // sensor_id -> [{ t, temperature }]
@@ -113,6 +114,7 @@ class Store {
     (s.devices || []).forEach((d) => { this.devices.set(d.device_id, d); this._indexDeviceKey(d); });
     if (s.thresholds) this.thresholds = Object.assign(config.defaultThresholds(), s.thresholds);
     if (s.alertConfig) this.alertConfig = Object.assign(defaultAlertConfig(), s.alertConfig);
+    if (s.smtpSettings) this.smtpSettings = s.smtpSettings;
     if (Array.isArray(s.audit) && !this.audit.length) this.audit = s.audit;
     if (Array.isArray(s.secLog) && !this.secLog.length) this.secLog = s.secLog;
     // Alerts used to live in memory only and vanished on every restart/redeploy, silently losing
@@ -206,6 +208,7 @@ class Store {
       devices: [...this.devices.values()],
       thresholds: this.thresholds,
       alertConfig: this.alertConfig,
+      smtpSettings: this.smtpSettings,
       audit: this.audit.slice(0, 1500),
       secLog: this.secLog.slice(0, 500),
       alerts: this.alerts.slice(0, 5000),
@@ -269,6 +272,76 @@ class Store {
     this.logAudit({ user, action: 'set_alert_config', detail: 'notification routing updated' });
     this._persist();
     return this.alertConfig;
+  }
+
+  // ===== SMTP (outgoing e-mail) settings ==================================
+  // Dashboard-editable override for the SMTP host/user/password/from so a
+  // Super Admin can rotate the mail password from the Admin tab instead of
+  // SSH-ing into the server and editing .env. When no override is saved
+  // (smtpSettings is null, or has neither host nor user set), the server
+  // .env values (src/config.js) are used as before - nothing changes until
+  // someone explicitly saves settings here. The password is stored
+  // encrypted (src/crypto-util.js), never in plain text in the state file.
+  getSmtpSettings() {
+    const o = this.smtpSettings;
+    const usingOverride = !!(o && (o.host || o.user));
+    if (usingOverride) {
+      return {
+        host: o.host || '', port: o.port || 587, user: o.user || '', from: o.from || '',
+        has_password: !!o.passwordEnc, source: 'dashboard', updated_at: o.updated_at || null,
+      };
+    }
+    return {
+      host: config.SMTP_HOST, port: config.SMTP_PORT || 587, user: config.SMTP_USER, from: config.SMTP_FROM,
+      has_password: !!config.SMTP_PASSWORD, source: 'server .env', updated_at: null,
+    };
+  }
+
+  // Used by notify.js to actually send mail - includes the real password.
+  getEffectiveSmtpConfig() {
+    const o = this.smtpSettings;
+    if (o && (o.host || o.user)) {
+      const cryptoUtil = require('./crypto-util');
+      return {
+        host: o.host || config.SMTP_HOST, port: o.port || config.SMTP_PORT || 587,
+        user: o.user || config.SMTP_USER,
+        password: o.passwordEnc ? cryptoUtil.decrypt(o.passwordEnc) : config.SMTP_PASSWORD,
+        from: o.from || config.SMTP_FROM, _version: 'dash:' + (o.updated_at || 0),
+      };
+    }
+    return {
+      host: config.SMTP_HOST, port: config.SMTP_PORT || 587, user: config.SMTP_USER,
+      password: config.SMTP_PASSWORD, from: config.SMTP_FROM, _version: 'env',
+    };
+  }
+
+  // patch: { host, port, user, password, from }. password left blank/omitted
+  // keeps the previously saved one (so re-saving host/from doesn't force a
+  // password re-entry). Caller (api.js) must restrict this to super_admin.
+  setSmtpSettings(patch, user) {
+    const cryptoUtil = require('./crypto-util');
+    const cur = this.smtpSettings || {};
+    const next = {
+      host: patch.host !== undefined ? String(patch.host).trim() : (cur.host || ''),
+      port: patch.port !== undefined && patch.port !== '' ? Number(patch.port) : (cur.port || 587),
+      user: patch.user !== undefined ? String(patch.user).trim() : (cur.user || ''),
+      from: patch.from !== undefined ? String(patch.from).trim() : (cur.from || ''),
+      passwordEnc: cur.passwordEnc || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (patch.password) next.passwordEnc = cryptoUtil.encrypt(patch.password);
+    this.smtpSettings = next;
+    this.logAudit({ user, action: 'set_smtp_settings', detail: `host=${next.host || '(env)'} user=${next.user || '(env)'}` });
+    this._persist();
+    return this.getSmtpSettings();
+  }
+
+  // Revert to the server .env values (e.g. to undo a mistaken dashboard entry).
+  clearSmtpSettings(user) {
+    this.smtpSettings = null;
+    this.logAudit({ user, action: 'clear_smtp_settings', detail: 'reverted to server .env SMTP settings' });
+    this._persist();
+    return this.getSmtpSettings();
   }
 
   // ===== Sensor registry (serial / calibration / firmware / warranty) =====

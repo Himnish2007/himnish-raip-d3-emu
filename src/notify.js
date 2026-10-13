@@ -15,14 +15,35 @@ const config = require('./config');
 // ---------------------------------------------------------------------------
 
 function createNotifier() {
-  let transport = null;
-  const smtpReady = !!(config.SMTP_HOST && config.SMTP_USER);
-  if (smtpReady) {
-    transport = nodemailer.createTransport({
-      host: config.SMTP_HOST, port: config.SMTP_PORT || 587,
-      secure: (config.SMTP_PORT || 587) === 465,
-      auth: { user: config.SMTP_USER, pass: config.SMTP_PASSWORD },
-    });
+  // Transport is rebuilt lazily from the *effective* SMTP config (dashboard
+  // override via store.getEffectiveSmtpConfig() if a Super Admin has saved
+  // one, else the server .env values) and cached until that config changes -
+  // so saving new SMTP settings on the Admin tab takes effect immediately,
+  // with no server restart / SSH needed.
+  let cachedTransport = null;
+  let cachedSig = null;
+  let cachedSmtpReady = false;
+  let cachedFrom = '';
+
+  function effectiveSmtp(store) {
+    if (store && typeof store.getEffectiveSmtpConfig === 'function') return store.getEffectiveSmtpConfig();
+    return { host: config.SMTP_HOST, port: config.SMTP_PORT || 587, user: config.SMTP_USER, password: config.SMTP_PASSWORD, from: config.SMTP_FROM, _version: 'env' };
+  }
+
+  function getTransport(store) {
+    const eff = effectiveSmtp(store);
+    const sig = `${eff.host}|${eff.port}|${eff.user}|${eff._version}`;
+    if (sig !== cachedSig) {
+      cachedSig = sig;
+      cachedSmtpReady = !!(eff.host && eff.user);
+      cachedFrom = eff.from || eff.user || '';
+      cachedTransport = cachedSmtpReady ? nodemailer.createTransport({
+        host: eff.host, port: eff.port || 587,
+        secure: (eff.port || 587) === 465,
+        auth: { user: eff.user, pass: eff.password },
+      }) : null;
+    }
+    return { transport: cachedTransport, smtpReady: cachedSmtpReady, from: cachedFrom };
   }
 
   function fill(tpl, ctx) {
@@ -39,9 +60,10 @@ function createNotifier() {
   async function sendEmail(to, subject, body, store) {
     const rec = { channel: 'email', to, at: new Date().toISOString(), subject };
     try {
+      const { transport, smtpReady, from } = getTransport(store);
       if (!smtpReady) { rec.ok = true; rec.note = 'dry-run (no SMTP configured)'; }
       else {
-        await transport.sendMail({ from: config.SMTP_FROM || config.SMTP_USER, to, subject, text: body });
+        await transport.sendMail({ from: from, to, subject, text: body });
         rec.ok = true;
       }
     } catch (e) { rec.ok = false; rec.error = e.message; }
@@ -184,7 +206,7 @@ function createNotifier() {
       const every = (alert.severity === 'offline' ? (Number(config.OFFLINE_EMAIL_REMINDER_MIN) || 0) : (Number(config.EMAIL_REPEAT_MIN) || 0)) * 60000;
       const ekey = `${alert.severity}|${alert.coach_id || alert.sensor_id}|${to}`;
       const last = emailLast.get(ekey) || 0;
-      if (every && Date.now() - last < every) { console.log(`[email] not repeated to ${to} (${ekey.split('|').slice(0, 2).join(' ')}): last sent ${Math.round((Date.now() - last) / 60000)} min ago, limit ${config.EMAIL_REPEAT_MIN} min`); return; }
+      if (every && Date.now() - last < every) { console.log(`[email] not repeated to ${to} (${ekey.split('|').slice(0, 2).join(' ')}): last sent ${Math.round((Date.now() - last) / 60000)} min ago, limit ${Math.round(every / 60000)} min`); return; }
       const rec = await sendEmail(to, subject, body, store);
       if (rec.ok) emailLast.set(ekey, Date.now());
     };
@@ -249,7 +271,10 @@ function createNotifier() {
     return emails.length;
   }
 
-  return { dispatchForAlert, sendEscalation, sendTest, sendReportEmail, smtpReady,
+  // Live readiness check (reflects dashboard-saved SMTP settings if any).
+  function smtpStatus(store) { return getTransport(store).smtpReady; }
+
+  return { dispatchForAlert, sendEscalation, sendTest, sendReportEmail, smtpStatus,
     smsProvider: (config.SMS_PROVIDER || 'log') };
 }
 
