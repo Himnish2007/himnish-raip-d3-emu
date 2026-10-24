@@ -90,6 +90,7 @@ class Store {
     this.secLog = [];              // sign-in / security events (kept across restarts, last 500)
     this.notifications = [];       // SMS/email delivery log, newest first
     this.comm = new Map();         // coach_id -> live comm telemetry (rssi, packet_loss, lte...)
+    this._riseStreak = new Map();  // sensor_id -> consecutive readings over the rapid-rise rate (debounce; not persisted, harmless to lose on restart)
     this._notifier = null;         // server sets: fn(alert) => dispatch
     this._alertSeq = 1;
     this._saveTimer = null;
@@ -1132,13 +1133,43 @@ class Store {
     if (this.db && this._shouldArchive(meta.sensor_id, eventTime)) this.db.insertReading(meta).catch(() => {});
 
     // Predictive: rapid temperature-rise detection over the recent window.
+    // The slope is computed over only the last 6 readings — at a 10-20s push
+    // interval that is well under a minute, so a single noisy/misread sensor
+    // value (RS485/wireless glitch) can swing the computed rate by tens of
+    // deg/min even though the bearing cannot physically heat that fast.
+    // Requiring the windowed slope to exceed CFG_RISE_RATE on 2 consecutive
+    // readings is NOT enough by itself: a single bad value stays inside that
+    // 6-point window for several readings after it occurred, so the windowed
+    // slope keeps reading high for multiple pushes even once the sensor is
+    // back to reporting normal values — a lone spike can still satisfy "2
+    // consecutive" on the stale echo of itself. Fix: also require the raw
+    // point-to-point rate between the latest two readings (not the 6-point
+    // window) to independently exceed the threshold. A real, sustained rise
+    // keeps climbing step-to-step, so both checks keep passing; a lone spike
+    // is followed by the value dropping back, so the point-to-point rate on
+    // the very next reading goes flat/negative and breaks the streak even
+    // though the windowed slope is still elevated from the earlier spike.
     if (meta.temperature != null && meta.status !== 'offline') {
-      const slope = this._slope(buf, 6); // deg C per minute
-      if (slope != null && slope >= t.CFG_RISE_RATE && meta.temperature > 50) {
-        this._raise({ severity: 'rapid_rise', sensor_id: meta.sensor_id, coach_id: meta.coach_id,
-          emu_id: meta.emu_id, tm_id: meta.tm_id, value: meta.temperature,
-          message: `Rapid rise on ${meta.tm_id || meta.sensor_id} (${slope.toFixed(1)} C/min) at ${meta.temperature.toFixed(1)}C` });
+      const slope = this._slope(buf, 6); // deg C per minute, over the last 6 readings
+      const prevPt = buf.length >= 2 ? buf[buf.length - 2] : null;
+      const curPt = buf[buf.length - 1];
+      let instantRate = null; // deg C per minute, between just the last 2 readings
+      if (prevPt && prevPt.temperature != null && curPt.temperature != null) {
+        const dtMin = (new Date(curPt.t).getTime() - new Date(prevPt.t).getTime()) / 60000;
+        if (dtMin > 0) instantRate = (curPt.temperature - prevPt.temperature) / dtMin;
+      }
+      const exceeds = slope != null && slope >= t.CFG_RISE_RATE && meta.temperature > 50
+        && instantRate != null && instantRate >= t.CFG_RISE_RATE;
+      if (exceeds) {
+        const streak = (this._riseStreak.get(meta.sensor_id) || 0) + 1;
+        this._riseStreak.set(meta.sensor_id, streak);
+        if (streak >= 2) {
+          this._raise({ severity: 'rapid_rise', sensor_id: meta.sensor_id, coach_id: meta.coach_id,
+            emu_id: meta.emu_id, tm_id: meta.tm_id, value: meta.temperature,
+            message: `Rapid rise on ${meta.tm_id || meta.sensor_id} (${slope.toFixed(1)} C/min) at ${meta.temperature.toFixed(1)}C` });
+        }
       } else {
+        this._riseStreak.delete(meta.sensor_id);
         // The rise has slowed or the temperature dropped back under the "rapid rise" floor: this was
         // never auto-resolved before, so a rapid-rise alert would sit active forever otherwise.
         this._autoResolve((a) => a.sensor_id === meta.sensor_id && a.severity === 'rapid_rise', 'rate of rise back to normal');
