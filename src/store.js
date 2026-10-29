@@ -91,6 +91,7 @@ class Store {
     this.notifications = [];       // SMS/email delivery log, newest first
     this.comm = new Map();         // coach_id -> live comm telemetry (rssi, packet_loss, lte...)
     this._riseStreak = new Map();  // sensor_id -> consecutive readings over the rapid-rise rate (debounce; not persisted, harmless to lose on restart)
+    this._critStreak = new Map();  // sensor_id -> consecutive readings above CFG_CRIT_TEMP (debounce; not persisted, harmless to lose on restart)
     this._notifier = null;         // server sets: fn(alert) => dispatch
     this._alertSeq = 1;
     this._saveTimer = null;
@@ -1235,15 +1236,36 @@ class Store {
     if (s.temperature > t.CFG_CRIT_TEMP) sev = 'critical';
     else if (s.temperature > t.CFG_HIGH_TEMP) sev = 'high';
     else if (s.temperature > t.CFG_WARN_TEMP) sev = 'warning';
+
+    // Critical is the top severity — it drives the fastest escalation and immediate
+    // SMS/email paging — so a single misread/glitch reading (a comms blip, a stale
+    // or bad value right as a sensor reconnects, etc.) that happens to land above
+    // CFG_CRIT_TEMP should not page everyone on its own. Require the reading to be
+    // above CFG_CRIT_TEMP on 2 CONSECUTIVE readings before confirming 'critical'.
+    // The first breach is never silently dropped though — it's still raised as
+    // 'high' so a real, sustained fault is caught from the first reading, just one
+    // severity tier down until confirmed. It's upgraded to 'critical' (superseding
+    // the 'high' alert) once the 2nd consecutive reading confirms it, or cleared
+    // back to normal via the usual auto-resolve below if the very next reading
+    // drops out of the critical band.
+    let confirmedSev = sev;
+    if (sev === 'critical') {
+      const streak = (this._critStreak.get(s.sensor_id) || 0) + 1;
+      this._critStreak.set(s.sensor_id, streak);
+      if (streak < 2) confirmedSev = 'high';
+    } else {
+      this._critStreak.delete(s.sensor_id);
+    }
+
     // Auto-resolve: at most one temperature severity is ever "true" for a sensor at a given moment.
     // Any OTHER active temperature-severity alert for this sensor is superseded (temp moved to a
     // different band, or back to normal) and is closed out automatically rather than sitting active
     // forever until someone manually acknowledges it.
     const TEMP_SEVS = ['warning', 'high', 'critical'];
-    this._autoResolve((a) => a.sensor_id === s.sensor_id && TEMP_SEVS.includes(a.severity) && a.severity !== sev,
-      sev ? `superseded — now ${sev}` : 'temperature back to normal');
-    if (sev) this._raise({ severity: sev, sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id,
-      tm_id: s.tm_id, value: s.temperature, message: `${s.tm_id || s.sensor_id} on ${s.coach_id}: ${s.temperature.toFixed(1)}C (${sev})` });
+    this._autoResolve((a) => a.sensor_id === s.sensor_id && TEMP_SEVS.includes(a.severity) && a.severity !== confirmedSev,
+      confirmedSev ? `superseded — now ${confirmedSev}` : 'temperature back to normal');
+    if (confirmedSev) this._raise({ severity: confirmedSev, sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id,
+      tm_id: s.tm_id, value: s.temperature, message: `${s.tm_id || s.sensor_id} on ${s.coach_id}: ${s.temperature.toFixed(1)}C (${confirmedSev})` });
     if (s.battery_health != null && s.battery_health <= t.CFG_LOW_BATTERY) {
       this._raise({ severity: 'low_battery', sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id, tm_id: s.tm_id,
         value: s.battery_health, message: `Low battery on ${s.sensor_id}: ${s.battery_health}%` });
