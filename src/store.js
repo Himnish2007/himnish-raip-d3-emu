@@ -91,6 +91,7 @@ class Store {
     this.notifications = [];       // SMS/email delivery log, newest first
     this.comm = new Map();         // coach_id -> live comm telemetry (rssi, packet_loss, lte...)
     this._riseStreak = new Map();  // sensor_id -> consecutive readings over the rapid-rise rate (debounce; not persisted, harmless to lose on restart)
+    this._warnSince = new Map();   // sensor_id -> ms timestamp since which the temp has been CONTINUOUSLY above CFG_WARN_TEMP (warning hold timer; not persisted)
     this._critStreak = new Map();  // sensor_id -> consecutive readings above CFG_CRIT_TEMP (debounce; not persisted, harmless to lose on restart)
     this._notifier = null;         // server sets: fn(alert) => dispatch
     this._alertSeq = 1;
@@ -1262,10 +1263,22 @@ class Store {
     // different band, or back to normal) and is closed out automatically rather than sitting active
     // forever until someone manually acknowledges it.
     const TEMP_SEVS = ['warning', 'high', 'critical'];
+    // Warning hold: the temperature must stay CONTINUOUSLY above CFG_WARN_TEMP for
+    // WARN_CONFIRM_SECONDS (default 120 s = 2 min) before a 'warning' alert is raised, so a brief
+    // excursion just over the limit does not alert. The timer starts at the first reading above
+    // the warning limit (high/critical readings count too) and resets the moment a reading is at
+    // or below it. high/critical keep their own faster rules and are NOT delayed by this hold.
+    const nowMs = Date.parse(s.last_update) || Date.now();
+    if (s.temperature > t.CFG_WARN_TEMP) { if (!this._warnSince.has(s.sensor_id)) this._warnSince.set(s.sensor_id, nowMs); }
+    else this._warnSince.delete(s.sensor_id);
+    const holdMs = Math.max(0, Number(config.WARN_CONFIRM_SECONDS) || 0) * 1000;
+    const warnPending = confirmedSev === 'warning' && (nowMs - this._warnSince.get(s.sensor_id)) < holdMs;
+    if (!warnPending) {
     this._autoResolve((a) => a.sensor_id === s.sensor_id && TEMP_SEVS.includes(a.severity) && a.severity !== confirmedSev,
       confirmedSev ? `superseded — now ${confirmedSev}` : 'temperature back to normal');
     if (confirmedSev) this._raise({ severity: confirmedSev, sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id,
       tm_id: s.tm_id, value: s.temperature, message: `${s.tm_id || s.sensor_id} on ${s.coach_id}: ${s.temperature.toFixed(1)}C (${confirmedSev})` });
+    }
     if (s.battery_health != null && s.battery_health <= t.CFG_LOW_BATTERY) {
       this._raise({ severity: 'low_battery', sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id, tm_id: s.tm_id,
         value: s.battery_health, message: `Low battery on ${s.sensor_id}: ${s.battery_health}%` });

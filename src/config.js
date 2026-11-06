@@ -67,6 +67,8 @@ const config = {
   CFG_WARN_TEMP: num('CFG_WARN_TEMP', 70),
   CFG_HIGH_TEMP: num('CFG_HIGH_TEMP', 80),
   CFG_CRIT_TEMP: num('CFG_CRIT_TEMP', 90),
+  // Warning alert fires only after the temperature has stayed above CFG_WARN_TEMP continuously for this long (seconds). 0 = immediate.
+  WARN_CONFIRM_SECONDS: num('WARN_CONFIRM_SECONDS', 120),
   CFG_OFFLINE_SECONDS: num('CFG_OFFLINE_SECONDS', 300),
   // How long a coach must STAY offline before an alert (email/SMS) is actually sent — separate from
   // and longer than CFG_OFFLINE_SECONDS above (which only controls the dashboard's online/offline
