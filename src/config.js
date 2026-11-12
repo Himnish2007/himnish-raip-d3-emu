@@ -69,6 +69,20 @@ const config = {
   CFG_CRIT_TEMP: num('CFG_CRIT_TEMP', 90),
   // Warning alert fires only after the temperature has stayed above CFG_WARN_TEMP continuously for this long (seconds). 0 = immediate.
   WARN_CONFIRM_SECONDS: num('WARN_CONFIRM_SECONDS', 120),
+  // High alert: temp must stay above CFG_HIGH_TEMP this long (seconds) before it alerts. 0 = immediate.
+  HIGH_CONFIRM_SECONDS: num('HIGH_CONFIRM_SECONDS', 60),
+  // Sensor plausibility filter. Readings outside [MIN,MAX] (tender sensor range 0-120 C) are treated as a
+  // sensor fault and ignored. A reading that jumps more than SPIKE_DELTA_C from the last good one within
+  // SPIKE_WINDOW_SECONDS is held back until the next reading confirms it (SPIKE_DELTA_C=0 disables).
+  SENSOR_MAX_VALID_TEMP: num('SENSOR_MAX_VALID_TEMP', 120),
+  SENSOR_MIN_VALID_TEMP: num('SENSOR_MIN_VALID_TEMP', -20),
+  SPIKE_DELTA_C: num('SPIKE_DELTA_C', 25),
+  SPIKE_WINDOW_SECONDS: num('SPIKE_WINDOW_SECONDS', 180),
+  // This many rejected readings within SENSOR_FAULT_WINDOW_SECONDS raise ONE 'sensor_fault' alert (auto-clears when stable).
+  SENSOR_FAULT_HITS: num('SENSOR_FAULT_HITS', 3),
+  SENSOR_FAULT_WINDOW_SECONDS: num('SENSOR_FAULT_WINDOW_SECONDS', 600),
+  // A coach that was offline must report continuously this long before its offline alert closes (stops flapping re-alerts).
+  OFFLINE_RECOVER_SECONDS: num('OFFLINE_RECOVER_SECONDS', 600),
   CFG_OFFLINE_SECONDS: num('CFG_OFFLINE_SECONDS', 300),
   // How long a coach must STAY offline before an alert (email/SMS) is actually sent — separate from
   // and longer than CFG_OFFLINE_SECONDS above (which only controls the dashboard's online/offline

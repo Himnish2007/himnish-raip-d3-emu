@@ -24,6 +24,8 @@ function startPoller(store) {
   let stopped = false;
   let timer = null;
 
+  const fails = new Map(); // coach_id -> { n, next } : back off from unreachable routers instead of failing every cycle
+
   async function pollCoach(c) {
     const url = `http://${c.rut200_ip}:${c.rut200_port || 80}${c.rut200_path || '/readings'}`;
     const ctrl = new AbortController();
@@ -40,8 +42,13 @@ function startPoller(store) {
         n++;
       }
       if (n) console.log(`[poller] ${c.coach_id} @ ${c.rut200_ip}: ${n} readings`);
+      fails.delete(c.coach_id);
     } catch (e) {
-      console.warn(`[poller] ${c.coach_id} @ ${c.rut200_ip} failed: ${e.message}`);
+      const f = fails.get(c.coach_id) || { n: 0, next: 0 };
+      f.n++;
+      f.next = Date.now() + Math.min(600, currentIntervalSec() * Math.pow(2, Math.min(f.n, 6))) * 1000;
+      fails.set(c.coach_id, f);
+      if (f.n === 1 || f.n % 20 === 0) console.warn(`[poller] ${c.coach_id} @ ${c.rut200_ip} failed (${f.n}x, backing off): ${e.message}`);
     } finally {
       clearTimeout(t);
     }
@@ -58,7 +65,7 @@ function startPoller(store) {
     const interval = currentIntervalSec();
     if (interval > 0) {
       const coaches = store.pollableCoaches();
-      for (const c of coaches) await pollCoach(c);
+      for (const c of coaches) { const f = fails.get(c.coach_id); if (f && Date.now() < f.next) continue; await pollCoach(c); }
     }
     if (!stopped) timer = setTimeout(tick, Math.max(5, interval) * 1000);
   }

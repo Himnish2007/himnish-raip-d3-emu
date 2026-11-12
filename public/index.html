@@ -155,7 +155,7 @@
   .sev.warning{background:var(--warn-bg);color:var(--warn)} .sev.offline{background:var(--off-bg);color:var(--off)}
   .sev.normal{background:var(--ok-bg);color:var(--ok)}
   .sev.low_battery{background:var(--warn-bg);color:var(--warn)}
-  .sev.rapid_rise{background:var(--high-bg);color:var(--high)}
+  .sev.rapid_rise{background:var(--high-bg);color:var(--high)} .sev.sensor_fault{background:var(--off-bg);color:var(--off)}
   .state{font-size:11px;color:var(--muted)} .state.active{color:var(--crit)} .state.acknowledged{color:var(--ok)} .state.resolved{color:var(--warn)} .state.closed{color:var(--muted);font-style:italic}
   .mini{background:transparent;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:4px 9px;font-size:12px}
   .mini:hover{border-color:var(--brand);color:var(--brand)}
@@ -1944,7 +1944,7 @@
   function delCoach(c){if(confirm('Delete coach '+c.coach_id+'?'))adminCall('/coach/'+encodeURIComponent(c.coach_id),'DELETE');}
 
   // ---- Notifications ----
-  var SEVERITIES=['warning','high','critical','rapid_rise','offline','low_battery'];
+  var SEVERITIES=['warning','high','critical','rapid_rise','offline','low_battery','sensor_fault'];
   var TIERS=['L1','L2','L3','L4'];
   function csv(a){return (a||[]).join(', ');}
   function arr(s){return (s||'').split(',').map(function(x){return x.trim();}).filter(Boolean);}

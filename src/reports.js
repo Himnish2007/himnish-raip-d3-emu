@@ -193,7 +193,7 @@ tr:nth-child(even) td{background:#f4f7fa}.foot{margin-top:16px;font-size:11px;co
 // is any fault-type alert (temperature warning/high/critical, rapid rise, or offline) — low_battery
 // is excluded since a flat battery is routine maintenance, not an equipment fault. Needs at least 2
 // failures to compute an MTBF gap; MTTR needs at least 1 resolved/closed failure with a timestamp.
-const FAULT_SEVERITIES = ['warning', 'high', 'critical', 'rapid_rise', 'offline'];
+const FAULT_SEVERITIES = ['warning', 'high', 'critical', 'rapid_rise', 'offline', 'sensor_fault'];
 function reliability(store, scope, { days } = {}) {
   const since = days ? Date.now() - days * 86400000 : 0;
   const visible = (a) => (scope.all || (a.coach_id && scope.coaches.has(a.coach_id))) && FAULT_SEVERITIES.includes(a.severity) && Date.parse(a.at) >= since;

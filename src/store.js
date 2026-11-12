@@ -38,6 +38,7 @@ function defaultAlertConfig() {
       offline: rule(['email', 'sms'], []),
       low_battery: rule(['email'], []),
       rapid_rise: rule(['email', 'sms'], [step('L1', 5), step('L2', 15), step('L3', 30)]),
+      sensor_fault: rule(['email'], []),
     },
     // "role" (optional) scopes escalation to people ASSIGNED to the alert's own coach/EMU who hold
     // that role — not the whole fleet. "emails"/"phones" are ADDITIONAL fixed recipients who see
@@ -91,6 +92,11 @@ class Store {
     this.notifications = [];       // SMS/email delivery log, newest first
     this.comm = new Map();         // coach_id -> live comm telemetry (rssi, packet_loss, lte...)
     this._riseStreak = new Map();  // sensor_id -> consecutive readings over the rapid-rise rate (debounce; not persisted, harmless to lose on restart)
+    this._highSince = new Map();   // sensor_id -> ms since which temp has been CONTINUOUSLY above CFG_HIGH_TEMP (high hold timer; not persisted)
+    this._lastGood = new Map();    // sensor_id -> {t, temp} last reading that passed the plausibility filter
+    this._suspect = new Map();     // sensor_id -> {t, temp} a far-off reading waiting for confirmation by the next one
+    this._faultHits = new Map();   // sensor_id -> {hits:[ms], meta} recent rejected readings (drives the sensor_fault alert)
+    this._recoverSince = new Map(); // coach_id -> ms since which an offline coach has been reporting again (offline-alert hysteresis)
     this._warnSince = new Map();   // sensor_id -> ms timestamp since which the temp has been CONTINUOUSLY above CFG_WARN_TEMP (warning hold timer; not persisted)
     this._critStreak = new Map();  // sensor_id -> consecutive readings above CFG_CRIT_TEMP (debounce; not persisted, harmless to lose on restart)
     this._notifier = null;         // server sets: fn(alert) => dispatch
@@ -116,7 +122,7 @@ class Store {
     if (s.depotEscalation) for (const k of Object.keys(s.depotEscalation)) this.depotEscalation.set(k, s.depotEscalation[k]);
     (s.devices || []).forEach((d) => { this.devices.set(d.device_id, d); this._indexDeviceKey(d); });
     if (s.thresholds) this.thresholds = Object.assign(config.defaultThresholds(), s.thresholds);
-    if (s.alertConfig) this.alertConfig = Object.assign(defaultAlertConfig(), s.alertConfig);
+    if (s.alertConfig) { const d = defaultAlertConfig(); this.alertConfig = Object.assign(d, s.alertConfig); this.alertConfig.rules = Object.assign({}, d.rules, s.alertConfig.rules || {}); }
     if (s.smtpSettings) this.smtpSettings = s.smtpSettings;
     if (Array.isArray(s.audit) && !this.audit.length) this.audit = s.audit;
     if (Array.isArray(s.secLog) && !this.secLog.length) this.secLog = s.secLog;
@@ -924,7 +930,7 @@ class Store {
     this.assignment.delete(coach_id);
     this.comm.delete(coach_id);
     // Remove the coach's live sensors/series so it stops appearing in views.
-    for (const s of [...this.sensors.values()]) if (s.coach_id === coach_id) { this.sensors.delete(s.sensor_id); this.series.delete(s.sensor_id); }
+    for (const s of [...this.sensors.values()]) if (s.coach_id === coach_id) { this.sensors.delete(s.sensor_id); this.series.delete(s.sensor_id); this._lastGood.delete(s.sensor_id); this._suspect.delete(s.sensor_id); this._faultHits.delete(s.sensor_id); }
     const orphanDevices = [...this.devices.values()].filter((d) => d.coach_id === coach_id).map((d) => d.device_id);
     this.logAudit({ user: actor, action: 'delete_coach', detail: coach_id + (orphanDevices.length ? ` (field device(s) still registered: ${orphanDevices.join(', ')})` : '') });
     this._persist();
@@ -1120,10 +1126,23 @@ class Store {
     }
     const wasOffline = existing && existing.status === 'offline';
 
+    // ---- Sensor plausibility filter ------------------------------------------------------------
+    // A faulty/loose RTD, floating input or RS485 noise produces readings that are physically
+    // impossible (e.g. 88 -> 179 -> 88 C within seconds). Those must never reach the live value,
+    // the alert rules or the history archive. They are counted instead, and a sustained pattern
+    // raises ONE 'sensor_fault' alert (see _recordSensorFault) rather than dozens of temperature alerts.
+    if (meta.temperature != null) {
+      const bad = this._plausibility(meta, eventTime);
+      if (bad) { this._recordSensorFault(meta, bad); return Object.assign({}, meta, { filtered: bad }); }
+    }
+
     this.sensors.set(r.sensor_id, meta);
     // The coach (or this sensor) is reporting again: close out its "offline" alert automatically —
     // otherwise it sits active forever until a human notices the coach came back and acknowledges it.
-    if (wasOffline && r.coach_id) this._autoResolve((a) => a.severity === 'offline' && a.coach_id === r.coach_id, 'coach back online');
+    // Hysteresis: a coach that flaps (a few readings, then silent again) must not close and re-raise
+    // its offline alert (and re-send SMS) every cycle. The alert is closed by sweepOffline() only
+    // once the coach has been reporting continuously for OFFLINE_RECOVER_SECONDS.
+    if (wasOffline && r.coach_id && !this._recoverSince.has(r.coach_id)) this._recoverSince.set(r.coach_id, Date.now());
     const buf = this.series.get(r.sensor_id) || [];
     buf.push({ t: eventTime, temperature: meta.temperature, battery: meta.battery_health });
     if (buf.length > MAX_SERIES) buf.shift();
@@ -1182,6 +1201,45 @@ class Store {
     return meta;
   }
 
+  // Returns null when the reading is believable, else a reason string. See ingestReading().
+  _plausibility(meta, eventTime) {
+    const id = meta.sensor_id, T = meta.temperature, ms = Date.parse(eventTime) || Date.now();
+    if (T > config.SENSOR_MAX_VALID_TEMP || T < config.SENSOR_MIN_VALID_TEMP) { this._suspect.delete(id); return 'out-of-range'; }
+    const delta = config.SPIKE_DELTA_C;
+    const lg = this._lastGood.get(id);
+    if (delta > 0 && lg && (ms - lg.t) <= config.SPIKE_WINDOW_SECONDS * 1000 && Math.abs(T - lg.temp) > delta) {
+      // Far from the last good value. Believe it only once consecutive readings agree with each other:
+      // 2 readings within delta/2 normally; while this sensor is already flagged faulty (recent rejected
+      // readings), a stable plateau of 4 readings within 5 C is required.
+      const rec = this._faultHits.get(id);
+      const faulty = rec && rec.hits.filter((x) => Date.now() - x < config.SENSOR_FAULT_WINDOW_SECONDS * 1000).length >= config.SENSOR_FAULT_HITS;
+      const tol = faulty ? 5 : delta / 2, need = faulty ? 4 : 2;
+      const sus = this._suspect.get(id);
+      if (sus && Math.abs(T - sus.temp) <= tol) {
+        sus.count++; sus.temp = T;
+        if (sus.count >= need) { this._suspect.delete(id); this._lastGood.set(id, { t: ms, temp: T }); return null; }
+        return 'spike';
+      }
+      this._suspect.set(id, { t: ms, temp: T, count: 1 });
+      return 'spike';
+    }
+    this._suspect.delete(id);
+    this._lastGood.set(id, { t: ms, temp: T });
+    return null;
+  }
+  _recordSensorFault(meta, reason) {
+    const now = Date.now(), win = config.SENSOR_FAULT_WINDOW_SECONDS * 1000;
+    const rec = this._faultHits.get(meta.sensor_id) || { hits: [], meta: null };
+    rec.hits = rec.hits.filter((x) => now - x < win); rec.hits.push(now);
+    rec.meta = { coach_id: meta.coach_id, emu_id: meta.emu_id, tm_id: meta.tm_id, last: meta.temperature, reason };
+    this._faultHits.set(meta.sensor_id, rec);
+    if (rec.hits.length >= config.SENSOR_FAULT_HITS) {
+      this._raise({ severity: 'sensor_fault', sensor_id: meta.sensor_id, coach_id: meta.coach_id, emu_id: meta.emu_id,
+        tm_id: meta.tm_id, value: meta.temperature,
+        message: `Sensor fault on ${meta.tm_id || meta.sensor_id} (coach ${meta.coach_id}): ${rec.hits.length} erratic/out-of-range readings in ${Math.round(win / 60000)} min (last ${meta.temperature.toFixed(1)}C, ${reason}) - readings ignored; check sensor wiring/connector` });
+    }
+  }
+
   sweepOffline() {
     const t = this.getThresholds();
     const statusCutoff = Date.now() - t.CFG_OFFLINE_SECONDS * 1000;          // dashboard online/offline badge: instant, unchanged
@@ -1201,6 +1259,23 @@ class Store {
         const key = s.coach_id || ('sensor:' + s.sensor_id);
         if (!dueForAlert.has(key)) dueForAlert.set(key, []);
         dueForAlert.get(key).push(s);
+      }
+    }
+    // sensor_fault clears itself once the sensor has produced no rejected reading for the whole window.
+    const faultWin = config.SENSOR_FAULT_WINDOW_SECONDS * 1000;
+    for (const [id, rec] of [...this._faultHits.entries()]) {
+      if (!rec.hits.length || Date.now() - rec.hits[rec.hits.length - 1] >= faultWin) {
+        this._autoResolve((a) => a.sensor_id === id && a.severity === 'sensor_fault', 'sensor readings stable again');
+        this._faultHits.delete(id);
+      }
+    }
+    // Offline alert hysteresis: close only after the coach has reported continuously for a while.
+    for (const [coach, since] of [...this._recoverSince.entries()]) {
+      const sensors = this.allSensors().filter((x) => x.coach_id === coach);
+      if (!sensors.some((x) => x.status === 'online')) { this._recoverSince.delete(coach); continue; }   // silent again -> keep alert, wait
+      if (Date.now() - since >= config.OFFLINE_RECOVER_SECONDS * 1000) {
+        this._autoResolve((a) => a.severity === 'offline' && a.coach_id === coach, 'coach back online (stable)');
+        this._recoverSince.delete(coach);
       }
     }
     // ONE offline alert per coach (not one per motor sensor -> no 4 duplicate emails/SMS).
@@ -1237,47 +1312,42 @@ class Store {
     if (s.temperature > t.CFG_CRIT_TEMP) sev = 'critical';
     else if (s.temperature > t.CFG_HIGH_TEMP) sev = 'high';
     else if (s.temperature > t.CFG_WARN_TEMP) sev = 'warning';
+    const id = s.sensor_id;
+    const nowMs = Date.parse(s.last_update) || Date.now();
 
-    // Critical is the top severity — it drives the fastest escalation and immediate
-    // SMS/email paging — so a single misread/glitch reading (a comms blip, a stale
-    // or bad value right as a sensor reconnects, etc.) that happens to land above
-    // CFG_CRIT_TEMP should not page everyone on its own. Require the reading to be
-    // above CFG_CRIT_TEMP on 2 CONSECUTIVE readings before confirming 'critical'.
-    // The first breach is never silently dropped though — it's still raised as
-    // 'high' so a real, sustained fault is caught from the first reading, just one
-    // severity tier down until confirmed. It's upgraded to 'critical' (superseding
-    // the 'high' alert) once the 2nd consecutive reading confirms it, or cleared
-    // back to normal via the usual auto-resolve below if the very next reading
-    // drops out of the critical band.
-    let confirmedSev = sev;
+    // Hold timers: warning and high must stay CONTINUOUSLY above their limit for WARN_CONFIRM_SECONDS /
+    // HIGH_CONFIRM_SECONDS before they alert, so a brief excursion over a limit does not page anyone.
+    // A timer starts at the first reading above its limit (higher bands count too) and resets as soon
+    // as a reading is at or below it. 0 = immediate.
+    if (s.temperature > t.CFG_WARN_TEMP) { if (!this._warnSince.has(id)) this._warnSince.set(id, nowMs); } else this._warnSince.delete(id);
+    if (s.temperature > t.CFG_HIGH_TEMP) { if (!this._highSince.has(id)) this._highSince.set(id, nowMs); } else this._highSince.delete(id);
+    // Critical: must be above CFG_CRIT_TEMP on 2 consecutive readings (a lone misread never pages).
+    let critConfirmed = false;
     if (sev === 'critical') {
-      const streak = (this._critStreak.get(s.sensor_id) || 0) + 1;
-      this._critStreak.set(s.sensor_id, streak);
-      if (streak < 2) confirmedSev = 'high';
-    } else {
-      this._critStreak.delete(s.sensor_id);
-    }
+      const streak = (this._critStreak.get(id) || 0) + 1;
+      this._critStreak.set(id, streak);
+      critConfirmed = streak >= 2;
+    } else this._critStreak.delete(id);
+
+    const warnHoldMs = Math.max(0, Number(config.WARN_CONFIRM_SECONDS) || 0) * 1000;
+    const highHoldMs = Math.max(0, Number(config.HIGH_CONFIRM_SECONDS) || 0) * 1000;
+    let confirmedSev = null;
+    if (critConfirmed) confirmedSev = 'critical';
+    else if (s.temperature > t.CFG_HIGH_TEMP && nowMs - this._highSince.get(id) >= highHoldMs) confirmedSev = 'high';
+    else if (s.temperature > t.CFG_WARN_TEMP && nowMs - this._warnSince.get(id) >= warnHoldMs) confirmedSev = 'warning';
+    // Above the warning limit but nothing confirmed yet: leave existing alerts untouched and wait.
+    const pending = confirmedSev == null && s.temperature > t.CFG_WARN_TEMP;
 
     // Auto-resolve: at most one temperature severity is ever "true" for a sensor at a given moment.
     // Any OTHER active temperature-severity alert for this sensor is superseded (temp moved to a
     // different band, or back to normal) and is closed out automatically rather than sitting active
     // forever until someone manually acknowledges it.
     const TEMP_SEVS = ['warning', 'high', 'critical'];
-    // Warning hold: the temperature must stay CONTINUOUSLY above CFG_WARN_TEMP for
-    // WARN_CONFIRM_SECONDS (default 120 s = 2 min) before a 'warning' alert is raised, so a brief
-    // excursion just over the limit does not alert. The timer starts at the first reading above
-    // the warning limit (high/critical readings count too) and resets the moment a reading is at
-    // or below it. high/critical keep their own faster rules and are NOT delayed by this hold.
-    const nowMs = Date.parse(s.last_update) || Date.now();
-    if (s.temperature > t.CFG_WARN_TEMP) { if (!this._warnSince.has(s.sensor_id)) this._warnSince.set(s.sensor_id, nowMs); }
-    else this._warnSince.delete(s.sensor_id);
-    const holdMs = Math.max(0, Number(config.WARN_CONFIRM_SECONDS) || 0) * 1000;
-    const warnPending = confirmedSev === 'warning' && (nowMs - this._warnSince.get(s.sensor_id)) < holdMs;
-    if (!warnPending) {
-    this._autoResolve((a) => a.sensor_id === s.sensor_id && TEMP_SEVS.includes(a.severity) && a.severity !== confirmedSev,
-      confirmedSev ? `superseded — now ${confirmedSev}` : 'temperature back to normal');
-    if (confirmedSev) this._raise({ severity: confirmedSev, sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id,
-      tm_id: s.tm_id, value: s.temperature, message: `${s.tm_id || s.sensor_id} on ${s.coach_id}: ${s.temperature.toFixed(1)}C (${confirmedSev})` });
+    if (!pending) {
+      this._autoResolve((a) => a.sensor_id === id && TEMP_SEVS.includes(a.severity) && a.severity !== confirmedSev,
+        confirmedSev ? `superseded — now ${confirmedSev}` : 'temperature back to normal');
+      if (confirmedSev) this._raise({ severity: confirmedSev, sensor_id: id, coach_id: s.coach_id, emu_id: s.emu_id,
+        tm_id: s.tm_id, value: s.temperature, message: `${s.tm_id || id} on ${s.coach_id}: ${s.temperature.toFixed(1)}C (${confirmedSev})` });
     }
     if (s.battery_health != null && s.battery_health <= t.CFG_LOW_BATTERY) {
       this._raise({ severity: 'low_battery', sensor_id: s.sensor_id, coach_id: s.coach_id, emu_id: s.emu_id, tm_id: s.tm_id,
